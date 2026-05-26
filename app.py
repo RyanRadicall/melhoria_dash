@@ -193,6 +193,14 @@ def tela_login():
         st.markdown("<br>", unsafe_allow_html=True)
         email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
         senha = st.text_input("Senha", type="password", placeholder="••••••••", key="auth_senha")
+        nome = ""
+
+if aba == "Criar conta":
+    nome = st.text_input(
+        "Nome de exibição",
+        placeholder="Ex: Ryan",
+        key="auth_nome"
+    )
         st.markdown("<br>", unsafe_allow_html=True)
 
         if aba == "Entrar":
