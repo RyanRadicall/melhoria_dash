@@ -1,6 +1,7 @@
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
+import calendar
 from datetime import date, datetime
 from supabase import create_client, Client
 from market import get_cotacoes
