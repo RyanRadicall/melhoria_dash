@@ -499,7 +499,7 @@ with tab_dash:
     col_ex1, col_ex2, col_ex3 = st.columns(3)
     with col_ex1:
         todos_lanc = db_lancamentos()
-        xlsx_bytes = exportar_excel(todos_lanc, db_investimentos(), db_metas())
+        xlsx_bytes = gerar_excel(todos_lanc, db_investimentos(), db_metas())
         mes_nome = MESES_BR[hoje.month-1]
         st.download_button(
             label="📊 Baixar Excel completo",
