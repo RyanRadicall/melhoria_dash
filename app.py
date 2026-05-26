@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import date, datetime
 from supabase import create_client, Client
 from market import get_cotacoes
-from services.exportar import exportar_excel
+from export import exportar_excel
 from styles.main_css import apply_styles
 
 # ── Page config ───────────────────────────────────────────────────────────────
