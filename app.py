@@ -51,9 +51,16 @@ def uid():
     return st.session_state.get("user_id","")
 
 def primeiro_nome():
-    e = st.session_state.get("user_email","")
+    nome = st.session_state.get("display_name", "")
+
+    if nome:
+        return nome
+
+    e = st.session_state.get("user_email", "")
+
     if e:
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
+
     return "Usuário"
 
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
@@ -211,7 +218,12 @@ if aba == "Criar conta":
                 else:
                     try:
                         res = supabase.auth.sign_in_with_password({"email":email.strip(),"password":senha})
-                        st.session_state.update({"user_id":res.user.id,"user_email":res.user.email,"logado":True})
+                        st.session_state.update({
+    "user_id": res.user.id,
+    "user_email": res.user.email,
+    "display_name": res.user.user_metadata.get("display_name", ""),
+    "logado": True
+})
                         st.rerun()
                     except Exception as e:
                         err = str(e).lower()
