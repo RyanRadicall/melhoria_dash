@@ -195,21 +195,41 @@ def tela_login():
 
     _, col, _ = st.columns([1,1.1,1])
     with col:
-        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True, label_visibility="collapsed", key="auth_aba")
-        st.markdown("<br>", unsafe_allow_html=True)
-        email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
-        senha = st.text_input("Senha", type="password", placeholder="••••••••", key="auth_senha")
-        
-        nome = ""
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
 
-if aba == "Criar conta":
-    nome = st.text_input(
-        "Nome de exibição",
-        placeholder="Ex: Ryan",
-        key="auth_nome"
+    aba = st.radio(
+        "",
+        ["Entrar","Criar conta"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="auth_aba"
     )
-        st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    email = st.text_input(
+        "E-mail",
+        placeholder="seuemail@exemplo.com",
+        key="auth_email"
+    )
+
+    senha = st.text_input(
+        "Senha",
+        type="password",
+        placeholder="••••••••",
+        key="auth_senha"
+    )
+
+    nome = ""
+
+    if aba == "Criar conta":
+        nome = st.text_input(
+            "Nome de exibição",
+            placeholder="Ex: Ryan",
+            key="auth_nome"
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
         if aba == "Entrar":
             if st.button("🔐 Entrar na plataforma", use_container_width=True, key="btn_login"):
