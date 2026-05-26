@@ -59,10 +59,15 @@ def primeiro_nome():
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
 def db_lancamentos(mes=None, ano=None):
     q = supabase.table("lancamentos").select("*").eq("user_id", uid())
+
     if mes and ano:
+        ultimo_dia = calendar.monthrange(ano, mes)[1]
+
         inicio = f"{ano}-{mes:02d}-01"
-        fim    = f"{ano}-{mes:02d}-31"
+        fim = f"{ano}-{mes:02d}-{ultimo_dia:02d}"
+
         q = q.gte("data", inicio).lte("data", fim)
+
     return q.order("data", desc=True).execute().data or []
 
 def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
