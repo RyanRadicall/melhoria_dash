@@ -224,7 +224,15 @@ if aba == "Criar conta":
                 elif len(senha) < 6: st.error("Senha precisa ter pelo menos 6 caracteres.")
                 else:
                     try:
-                        res = supabase.auth.sign_up({"email":email.strip(),"password":senha})
+                        res = supabase.auth.sign_up({
+    "email": email.strip(),
+    "password": senha,
+    "options": {
+        "data": {
+            "display_name": nome
+        }
+    }
+})
                         if res.user: st.success("✅ Conta criada! Clique em Entrar.")
                         else: st.warning("Verifique seu e-mail para confirmar.")
                     except Exception as e:
