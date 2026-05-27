@@ -41,7 +41,6 @@ def fmt(v):
     return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
 def fmt_compact(v):
-    """Formata valor de forma compacta para KPIs grandes"""
     if v >= 1_000_000:
         return f"R$ {v/1_000_000:.1f}M"
     elif v >= 1_000:
@@ -67,7 +66,13 @@ def primeiro_nome():
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
     return "Usuário"
 
-# ── Cache helpers (TTL de 60s para evitar excesso de queries) ─────────────────
+def iniciais(nome):
+    partes = nome.strip().split()
+    if len(partes) >= 2:
+        return (partes[0][0] + partes[-1][0]).upper()
+    return nome[:2].upper() if nome else "FP"
+
+# ── Cache helpers ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def cached_lancamentos_historico(_uid):
     return supabase.table("lancamentos").select("data,valor,tipo,categoria").eq("user_id",_uid).execute().data or []
@@ -178,18 +183,285 @@ def processar_recorrentes():
             inseridos += 1
     return inseridos
 
-# ── Análise avançada de IA ────────────────────────────────────────────────────
-def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano_sel):
-    """Gera insights financeiros ricos com análise histórica e projeções."""
-    insights = []
+# ── Score Financeiro Global ───────────────────────────────────────────────────
+def calcular_score(entradas, saidas, metas, orcs, cats_saida, hist_data, mes_sel, ano_sel):
+    """Calcula score de 0-1000 baseado em múltiplos fatores."""
+    score = 500  # base
 
     if entradas == 0:
-        return "💡 Adicione lançamentos para ativar os insights financeiros."
+        return 0, "Sem dados", 0
 
-    # Taxa de poupança
+    # Taxa de poupança (até +200 pts)
+    taxa = (entradas - saidas) / entradas
+    score += min(taxa * 400, 200)
+
+    # Controle de orçamento (até +150 pts, -100 se estourar)
+    if orcs:
+        orc_map = {o["categoria"]: o["limite"] for o in orcs}
+        estouros = sum(1 for cat, gasto in cats_saida.items()
+                       if cat in orc_map and gasto > orc_map[cat])
+        cumpridos = sum(1 for cat, gasto in cats_saida.items()
+                        if cat in orc_map and gasto <= orc_map[cat])
+        score += cumpridos * 20
+        score -= estouros * 40
+
+    # Progresso de metas (até +100 pts)
+    if metas:
+        media_metas = sum(m["atual"]/m["total"] for m in metas if m["total"] > 0) / len(metas)
+        score += media_metas * 100
+
+    # Consistência histórica (até +50 pts)
+    if hist_data:
+        df = pd.DataFrame(hist_data)
+        df["mes"] = pd.to_datetime(df["data"]).dt.to_period("M").astype(str)
+        meses_positivos = 0
+        for mes_key in df["mes"].unique():
+            e = df[(df["mes"]==mes_key)&(df["tipo"]=="entrada")]["valor"].sum()
+            s = df[(df["mes"]==mes_key)&(df["tipo"]=="saida")]["valor"].sum()
+            if e > s:
+                meses_positivos += 1
+        score += min(meses_positivos * 10, 50)
+
+    score = max(0, min(1000, round(score)))
+
+    if score >= 800:
+        tier = "Excelente · Elite"
+    elif score >= 650:
+        tier = "Ótimo · Top 25%"
+    elif score >= 500:
+        tier = "Bom · Acima da média"
+    elif score >= 350:
+        tier = "Regular · Atenção"
+    else:
+        tier = "Crítico · Ação urgente"
+
+    pct = score / 10
+    return score, tier, pct
+
+# ── Saúde por Dimensão ────────────────────────────────────────────────────────
+def calcular_saude(entradas, saidas, metas, orcs, cats_saida, invs):
+    """Retorna notas A/B/C para 4 dimensões."""
+    dimensoes = []
+
+    # 1. Poupança
+    if entradas > 0:
+        taxa = (entradas - saidas) / entradas
+        if taxa >= 0.30:
+            dimensoes.append(("💪", "Poupança", "A+", 95, "linear-gradient(90deg,#4ade80,#22c55e)"))
+        elif taxa >= 0.20:
+            dimensoes.append(("💪", "Poupança", "A", 82, "linear-gradient(90deg,#4ade80,#22c55e)"))
+        elif taxa >= 0.10:
+            dimensoes.append(("💪", "Poupança", "B+", 68, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        elif taxa >= 0:
+            dimensoes.append(("💪", "Poupança", "B", 52, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        else:
+            dimensoes.append(("💪", "Poupança", "C", 25, "linear-gradient(90deg,#f87171,#dc2626)"))
+    else:
+        dimensoes.append(("💪", "Poupança", "—", 0, "rgba(255,255,255,0.1)"))
+
+    # 2. Reserva (baseado em metas de reserva/emergência)
+    metas_reserva = [m for m in metas if any(w in m["nome"].lower() for w in ["reserva","emergência","emergencia","fundo"])]
+    if metas_reserva:
+        media = sum(m["atual"]/m["total"] for m in metas_reserva if m["total"]>0) / len(metas_reserva)
+        if media >= 0.9:
+            dimensoes.append(("🛡️", "Reserva", "A+", 95, "linear-gradient(90deg,#4ade80,#22c55e)"))
+        elif media >= 0.7:
+            dimensoes.append(("🛡️", "Reserva", "A", 80, "linear-gradient(90deg,#4ade80,#22c55e)"))
+        elif media >= 0.5:
+            dimensoes.append(("🛡️", "Reserva", "B+", 65, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        elif media >= 0.3:
+            dimensoes.append(("🛡️", "Reserva", "B", 50, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        else:
+            dimensoes.append(("🛡️", "Reserva", "C", 25, "linear-gradient(90deg,#f87171,#dc2626)"))
+    else:
+        dimensoes.append(("🛡️", "Reserva", "C", 15, "linear-gradient(90deg,#f87171,#dc2626)"))
+
+    # 3. Investimento
+    if invs:
+        total_inv = sum(i["valor"] for i in invs)
+        ratio = total_inv / entradas if entradas > 0 else 0
+        if ratio >= 0.3:
+            dimensoes.append(("📈", "Investimento", "A+", 95, "linear-gradient(90deg,#a78bfa,#7c3aed)"))
+        elif ratio >= 0.15:
+            dimensoes.append(("📈", "Investimento", "A", 78, "linear-gradient(90deg,#a78bfa,#7c3aed)"))
+        elif ratio >= 0.05:
+            dimensoes.append(("📈", "Investimento", "B+", 60, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        else:
+            dimensoes.append(("📈", "Investimento", "B", 45, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+    else:
+        dimensoes.append(("📈", "Investimento", "C", 10, "linear-gradient(90deg,#f87171,#dc2626)"))
+
+    # 4. Controle de gastos
+    if orcs and cats_saida:
+        orc_map = {o["categoria"]: o["limite"] for o in orcs}
+        total_cats = len([c for c in cats_saida if c in orc_map])
+        estouros = sum(1 for c, g in cats_saida.items() if c in orc_map and g > orc_map[c])
+        if total_cats == 0:
+            dimensoes.append(("⚖️", "Controle", "B", 50, "linear-gradient(90deg,#60a5fa,#2563eb)"))
+        elif estouros == 0:
+            dimensoes.append(("⚖️", "Controle", "A+", 96, "linear-gradient(90deg,#4ade80,#22c55e)"))
+        elif estouros == 1:
+            dimensoes.append(("⚖️", "Controle", "B+", 65, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        elif estouros <= 2:
+            dimensoes.append(("⚖️", "Controle", "B", 45, "linear-gradient(90deg,#fbbf24,#f59e0b)"))
+        else:
+            dimensoes.append(("⚖️", "Controle", "C", 20, "linear-gradient(90deg,#f87171,#dc2626)"))
+    else:
+        dimensoes.append(("⚖️", "Controle", "B", 55, "linear-gradient(90deg,#60a5fa,#2563eb)"))
+
+    return dimensoes
+
+# ── Modo Guerra ───────────────────────────────────────────────────────────────
+def calcular_modo_guerra(cats_saida, orcs, entradas, saidas, mes_sel, ano_sel):
+    """Retorna alertas críticos para o Modo Guerra."""
+    orc_map = {o["categoria"]: o["limite"] for o in orcs}
+    alertas = []
+
+    # Categorias estouradas
+    for cat, gasto in cats_saida.items():
+        if cat in orc_map and gasto > orc_map[cat]:
+            pct = round(gasto / orc_map[cat] * 100)
+            alertas.append({
+                "tipo": "danger",
+                "num": fmt(gasto),
+                "label": f"{cat} estourou",
+                "sub": f"+{pct-100}% do limite",
+            })
+
+    # Saldo negativo
+    saldo = entradas - saidas
+    if saldo < 0:
+        alertas.append({
+            "tipo": "danger",
+            "num": fmt(abs(saldo)),
+            "label": "Déficit do mês",
+            "sub": "Receita < Despesas",
+        })
+
+    # Dias restantes no mês
+    hoje = date.today()
+    if mes_sel == hoje.month and ano_sel == hoje.year:
+        dias_rest = calendar.monthrange(ano_sel, mes_sel)[1] - hoje.day
+        dia_atual = hoje.day
+        if dia_atual > 0 and saidas > 0:
+            projecao = (saidas / dia_atual) * calendar.monthrange(ano_sel, mes_sel)[1]
+            if projecao > entradas:
+                alertas.append({
+                    "tipo": "warn",
+                    "num": fmt(projecao),
+                    "label": "Projeção do mês",
+                    "sub": "Acima da receita",
+                })
+            else:
+                alertas.append({
+                    "tipo": "safe",
+                    "num": f"{dias_rest}d",
+                    "label": "Dias restantes",
+                    "sub": "Fluxo controlado",
+                })
+        else:
+            alertas.append({
+                "tipo": "safe",
+                "num": f"{dias_rest}d",
+                "label": "Dias restantes",
+                "sub": "Neste mês",
+            })
+
+    return alertas[:3]  # máx 3
+
+# ── Oracle IA ─────────────────────────────────────────────────────────────────
+def gerar_oracle(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano_sel, metas, invs):
+    """Gera análise Oracle IA com texto e tags."""
+    if entradas == 0:
+        return "Adicione lançamentos para ativar o Oracle.", []
+
+    tags = []
+    frases = []
+    saldo = entradas - saidas
+    taxa = round(saldo / entradas * 100) if entradas > 0 else 0
+
+    # Poupança
+    if taxa >= 30:
+        frases.append(f"Taxa de poupança excelente em {MESES_BR[mes_sel-1]}: <b>{taxa}%</b>.")
+        tags.append(("Poupança ✓", "good"))
+    elif taxa >= 10:
+        frases.append(f"Poupança de <b>{taxa}%</b> — tente chegar em 20%.")
+        tags.append(("Poupança ok", "warn"))
+    else:
+        frases.append(f"Poupança crítica: apenas <b>{taxa}%</b> da receita guardada.")
+        tags.append(("Poupança ⚠", "bad"))
+
+    # Alertas de orçamento
+    orc_map = {o["categoria"]: o["limite"] for o in orcs}
+    estouros = []
+    for cat, gasto in cats_saida.items():
+        if cat in orc_map and gasto > orc_map[cat]:
+            estouros.append(cat)
+    if estouros:
+        cats_str = ", ".join(estouros)
+        frases.append(f"Atenção: <b>{cats_str}</b> {'estourou' if len(estouros)==1 else 'estouraram'} o orçamento.")
+        tags.append((f"{', '.join(estouros[:2])} ⚠", "bad"))
+    else:
+        if orcs:
+            tags.append(("Orçamento ok", "good"))
+
+    # Maior gasto
+    if cats_saida:
+        maior_cat = max(cats_saida, key=cats_saida.get)
+        pct_maior = round(cats_saida[maior_cat] / saidas * 100) if saidas > 0 else 0
+        frases.append(f"<b>{maior_cat}</b> concentra {pct_maior}% das despesas.")
+
+    # Meta mais próxima de concluir
+    if metas:
+        meta_quase = max(metas, key=lambda m: m["atual"]/m["total"] if m["total"] > 0 else 0)
+        pct_meta = round(meta_quase["atual"]/meta_quase["total"]*100) if meta_quase["total"] > 0 else 0
+        if pct_meta >= 70:
+            falta = meta_quase["total"] - meta_quase["atual"]
+            frases.append(f"Meta <b>{meta_quase['nome']}</b> quase lá: {pct_meta}%, falta {fmt(falta)}.")
+            tags.append(("Meta quase", "good"))
+
+    texto = " ".join(frases) if frases else "Continue registrando para receber insights personalizados."
+    return texto, tags
+
+# ── Oportunidades ─────────────────────────────────────────────────────────────
+def gerar_oportunidades(entradas, saidas, invs, metas):
+    """Gera oportunidades financeiras personalizadas."""
+    opps = []
+    saldo = entradas - saidas
+
+    if saldo > 0:
+        rendimento_anual = saldo * 12 * 0.118
+        opps.append({
+            "icon": "📊", "class": "blue",
+            "title": "Tesouro Selic",
+            "desc": f"Aplicar {fmt(saldo * 0.5)}/mês · 11.8% aa",
+            "gain": f"+{fmt_compact(rendimento_anual * 0.5)}/ano",
+        })
+
+    aporte_diario = 10
+    opps.append({
+        "icon": "🐷", "class": "green",
+        "title": "Porquinho Digital",
+        "desc": f"Guardar R$ {aporte_diario}/dia · sem esforço",
+        "gain": f"+{fmt_compact(aporte_diario * 365)}/ano",
+    })
+
+    opps.append({
+        "icon": "⚡", "class": "amber",
+        "title": "Desafio 52 semanas",
+        "desc": "Começa R$ 1 · dobra por semana",
+        "gain": "+R$ 1.378/ano",
+    })
+
+    return opps[:3]
+
+# ── Insight IA legado ─────────────────────────────────────────────────────────
+def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano_sel):
+    insights = []
+    if entradas == 0:
+        return "💡 Adicione lançamentos para ativar os insights financeiros."
     poupanca = entradas - saidas
     taxa_poupar = round(poupanca / entradas * 100) if entradas > 0 else 0
-
     if taxa_poupar >= 30:
         insights.append(f"🏆 Taxa de poupança excelente: <b>{taxa_poupar}%</b> da renda guardada.")
     elif taxa_poupar >= 10:
@@ -197,56 +469,41 @@ def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano
     elif taxa_poupar >= 0:
         insights.append(f"⚠️ Taxa de poupança baixa: <b>{taxa_poupar}%</b>. Tente reduzir despesas.")
     else:
-        insights.append(f"🔴 Déficit de <b>{fmt(abs(poupanca))}</b> neste período. Receita insuficiente.")
-
-    # Maior categoria de gasto
+        insights.append(f"🔴 Déficit de <b>{fmt(abs(poupanca))}</b> neste período.")
     if cats_saida:
         maior_cat = max(cats_saida, key=cats_saida.get)
         pct_maior = round(cats_saida[maior_cat] / saidas * 100) if saidas > 0 else 0
         insights.append(f"📊 <b>{maior_cat}</b> consome {pct_maior}% das despesas ({fmt(cats_saida[maior_cat])}).")
-
-    # Comparação com mês anterior
     if hist_data:
         df = pd.DataFrame(hist_data)
         df["mes"] = pd.to_datetime(df["data"]).dt.to_period("M")
         periodo_atual = pd.Period(f"{ano_sel}-{mes_sel:02d}", "M")
         periodo_ant = periodo_atual - 1
-
         saidas_ant = df[(df["mes"] == periodo_ant) & (df["tipo"] == "saida")]["valor"].sum()
         if saidas_ant > 0 and saidas > 0:
             variacao = round((saidas - saidas_ant) / saidas_ant * 100)
             if variacao > 15:
-                insights.append(f"📈 Despesas <b>+{variacao}%</b> vs mês anterior. Atenção!")
+                insights.append(f"📈 Despesas <b>+{variacao}%</b> vs mês anterior.")
             elif variacao < -10:
                 insights.append(f"📉 Despesas <b>{variacao}%</b> vs mês anterior. Ótimo controle!")
-            else:
-                insights.append(f"➡️ Despesas estáveis vs mês anterior ({variacao:+d}%).")
-
-    # Projeção do mês (dias corridos)
     hoje = date.today()
     if mes_sel == hoje.month and ano_sel == hoje.year and saidas > 0:
         dia_atual = hoje.day
         dias_no_mes = calendar.monthrange(ano_sel, mes_sel)[1]
         projecao = (saidas / dia_atual) * dias_no_mes
         if projecao > entradas:
-            insights.append(f"🔮 Projeção: <b>{fmt(projecao)}</b> em despesas até fim do mês — acima da receita!")
+            insights.append(f"🔮 Projeção: <b>{fmt(projecao)}</b> em despesas — acima da receita!")
         else:
-            insights.append(f"🔮 Projeção de gastos até fim do mês: <b>{fmt(projecao)}</b>.")
-
-    # Alertas de orçamento
+            insights.append(f"🔮 Projeção de gastos: <b>{fmt(projecao)}</b>.")
     orc_map = {o["categoria"]: o["limite"] for o in orcs}
-    alertas_orc = []
     for cat, gasto in cats_saida.items():
         if cat in orc_map:
             pct_orc = round(gasto / orc_map[cat] * 100)
             if pct_orc >= 100:
-                alertas_orc.append(f"🔴 <b>{cat}</b>: orçamento estourado ({pct_orc}%)!")
+                insights.append(f"🔴 <b>{cat}</b>: orçamento estourado ({pct_orc}%)!")
             elif pct_orc >= 80:
-                alertas_orc.append(f"🟠 <b>{cat}</b>: {pct_orc}% do orçamento usado.")
-    if alertas_orc:
-        insights.extend(alertas_orc)
-
-    return "<br>".join(insights) if insights else "💡 Continue registrando para receber insights personalizados."
+                insights.append(f"🟠 <b>{cat}</b>: {pct_orc}% do orçamento usado.")
+    return "<br>".join(insights) if insights else "💡 Continue registrando para receber insights."
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGIN
@@ -334,7 +591,7 @@ if not st.session_state["logado"]:
     tela_login()
     st.stop()
 
-# ── Processar recorrentes (1x por sessão) ─────────────────────────────────────
+# ── Processar recorrentes ─────────────────────────────────────────────────────
 if "recorrentes_processados" not in st.session_state:
     try:
         n = processar_recorrentes()
@@ -347,17 +604,26 @@ if "recorrentes_processados" not in st.session_state:
 # ── Header ────────────────────────────────────────────────────────────────────
 h1, h2 = st.columns([4,1])
 with h1:
-    nome = primeiro_nome()
+    nome_usuario = primeiro_nome()
     hoje = date.today()
     hora = datetime.now().hour
     saudacao = "Bom dia" if hora < 12 else ("Boa tarde" if hora < 18 else "Boa noite")
+    ini = iniciais(nome_usuario)
     st.markdown(f"""
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
-      <div class="logo-text">Finance <span>PRO X</span></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:42px;height:42px;border-radius:13px;
+                    background:linear-gradient(135deg,#7c3aed,#2563eb,#06b6d4);
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:18px;box-shadow:0 0 20px rgba(124,58,237,0.5)">💜</div>
+        <div class="logo-text">Finance <span>PRO X</span></div>
+      </div>
       <div class="live-badge"><span class="live-dot"></span>Ao vivo</div>
       <div style="font-size:13px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.04);
                   border:1px solid rgba(255,255,255,0.07);border-radius:20px;padding:4px 14px;
-                  backdrop-filter:blur(10px)">👤 {saudacao}, {nome}</div>
+                  backdrop-filter:blur(10px)">
+        <span style="font-size:16px;margin-right:4px">👤</span>{saudacao}, {nome_usuario}
+      </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.2);padding:4px 10px;
                   border-radius:12px;background:rgba(255,255,255,0.03)">
         📅 {hoje.strftime("%d/%m/%Y")}
@@ -413,22 +679,112 @@ with tab_dash:
     saldo      = entradas - saidas
     invest     = sum(i["valor"] for i in invs)
     patrimonio = saldo + invest
-
-    # Taxa de poupança
     taxa_poupar = round(saldo / entradas * 100) if entradas > 0 else 0
 
-    # KPIs — 6 cards em 2 linhas de 3
+    cats_saida = {}
+    for t in txs:
+        if t["tipo"]=="saida":
+            cats_saida[t["categoria"]] = cats_saida.get(t["categoria"],0) + t["valor"]
+
+    # ── Score Financeiro Global ───────────────────────────────────────────────
+    score_val, score_tier, score_pct = calcular_score(
+        entradas, saidas, metas, orcs, cats_saida, hist, mes_sel, ano_sel
+    )
+    score_width = f"{score_pct:.1f}%"
+
+    # Comparação com mês anterior
+    entradas_ant, saidas_ant = 0, 0
+    if hist:
+        df_hist_tmp = pd.DataFrame(hist)
+        df_hist_tmp["mes"] = pd.to_datetime(df_hist_tmp["data"]).dt.to_period("M")
+        periodo_ant = pd.Period(f"{ano_sel}-{mes_sel:02d}", "M") - 1
+        entradas_ant = df_hist_tmp[(df_hist_tmp["mes"]==periodo_ant)&(df_hist_tmp["tipo"]=="entrada")]["valor"].sum()
+        saidas_ant   = df_hist_tmp[(df_hist_tmp["mes"]==periodo_ant)&(df_hist_tmp["tipo"]=="saida")]["valor"].sum()
+
+    def chg_str(atual, ant):
+        if ant == 0:
+            return "Primeiro mês"
+        pct = round((atual - ant) / ant * 100)
+        return f"{'▲' if pct >= 0 else '▼'} {abs(pct)}% vs mês ant."
+
+    st.markdown(f"""
+    <div class="score-wrap">
+      <div class="score-main">
+        <div class="score-label-top">⚡ Score Financeiro Global</div>
+        <div class="score-number">{score_val}</div>
+        <div class="score-tier">{score_tier}</div>
+        <div class="score-bar-wrap">
+          <div class="score-bar-fill" style="width:{score_width}"></div>
+        </div>
+      </div>
+      <div class="score-mini entrada">
+        <div class="mini-icon-big">💰</div>
+        <div class="mini-label-sm">Receita do mês</div>
+        <div class="mini-val-big up">{fmt(entradas)}</div>
+        <div class="mini-chg-sm">{chg_str(entradas, entradas_ant)}</div>
+      </div>
+      <div class="score-mini saida">
+        <div class="mini-icon-big">💸</div>
+        <div class="mini-label-sm">Despesas do mês</div>
+        <div class="mini-val-big dn">{fmt(saidas)}</div>
+        <div class="mini-chg-sm">{chg_str(saidas, saidas_ant)}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Saúde por Dimensão ────────────────────────────────────────────────────
+    dimensoes = calcular_saude(entradas, saidas, metas, orcs, cats_saida, invs)
+    health_html = '<div class="health-grid">'
+    for emoji, titulo, nota, pct, cor_bar in dimensoes:
+        grade_cls = "grade-a" if nota.startswith("A") else ("grade-b" if nota.startswith("B") else "grade-c")
+        health_html += f"""
+        <div class="health-card">
+          <div class="health-emoji">{emoji}</div>
+          <div class="health-title">{titulo}</div>
+          <div class="health-grade {grade_cls}">{nota}</div>
+          <div class="health-pct">{pct}%</div>
+          <div class="health-bar-wrap">
+            <div class="health-bar" style="width:{pct}%;background:{cor_bar}"></div>
+          </div>
+        </div>"""
+    health_html += "</div>"
+    st.markdown(health_html, unsafe_allow_html=True)
+
+    # ── Modo Guerra ───────────────────────────────────────────────────────────
+    alertas_guerra = calcular_modo_guerra(cats_saida, orcs, entradas, saidas, mes_sel, ano_sel)
+    if alertas_guerra:
+        war_items_html = ""
+        for alerta in alertas_guerra:
+            cls = alerta["tipo"]
+            war_items_html += f"""
+            <div class="war-item">
+              <div class="war-num {cls}">{alerta['num']}</div>
+              <div class="war-lbl">{alerta['label']}</div>
+              <div class="war-sub">{alerta['sub']}</div>
+            </div>"""
+
+        # Preencher até 3 slots
+        while len(alertas_guerra) < 3:
+            war_items_html += '<div class="war-item"></div>'
+            alertas_guerra.append({})
+
+        st.markdown(f"""
+        <div class="war-mode">
+          <div class="war-header"><span class="war-dot"></span>Alertas Críticos</div>
+          <div class="war-grid">{war_items_html}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # ── KPIs 2 linhas ─────────────────────────────────────────────────────────
     kpis_row1 = [
-        ("💰","RECEITA",       fmt(entradas),   "Total recebido",       True,       "kpi-purple","#7c3aed"),
-        ("💸","DESPESAS",      fmt(saidas),     "Total gasto",          saidas==0,  "kpi-blue",  "#2563eb"),
-        ("⚖️","SALDO",         fmt(saldo),      "Caixa disponível",     saldo>=0,   "kpi-green", "#16a34a"),
+        ("⚖️","SALDO",        fmt(saldo),      "Caixa disponível",     saldo>=0,       "kpi-green","#16a34a"),
+        ("🪙","POUPANÇA",     f"{taxa_poupar}%","Da receita guardada",  taxa_poupar>=20,"kpi-teal", "#0891b2"),
+        ("📊","INVESTIMENTOS",fmt(invest),      "Total aplicado",       True,           "kpi-amber","#d97706"),
     ]
     kpis_row2 = [
-        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",  taxa_poupar>=20, "kpi-teal",  "#0891b2"),
-        ("📊","INVESTIMENTOS", fmt(invest),     "Total aplicado",       True,       "kpi-amber", "#d97706"),
-        ("🏛️","PATRIMÔNIO",   fmt(patrimonio), "Patrimônio total",     True,       "kpi-rose",  "#e11d48"),
+        ("🏛️","PATRIMÔNIO",  fmt(patrimonio), "Patrimônio total",     True,       "kpi-purple","#7c3aed"),
+        ("📥","TOTAL ENTRADAS",fmt(entradas),  "Acumulado no mês",     True,       "kpi-blue",  "#2563eb"),
+        ("📤","TOTAL SAÍDAS", fmt(saidas),     "Acumulado no mês",     saidas==0,  "kpi-rose",  "#e11d48"),
     ]
-
     for row in [kpis_row1, kpis_row2]:
         cols = st.columns(3)
         for col,(icon,label,value,delta,up,cls,glow) in zip(cols,row):
@@ -437,6 +793,7 @@ with tab_dash:
             <div class="kpi-card {cls}">
               <div class="kpi-holo"></div>
               <div class="kpi-glow" style="background:{glow}"></div>
+              <div class="kpi-ring"></div>
               <div class="kpi-label">{icon}&nbsp; {label}</div>
               <div class="kpi-value">{value}</div>
               <div class="kpi-delta {dc}">{"▲" if up else "▼"} {delta}</div>
@@ -451,7 +808,6 @@ with tab_dash:
         df_ent = df_hist[df_hist["tipo"]=="entrada"].groupby("mes")["valor"].sum()
         df_sai = df_hist[df_hist["tipo"]=="saida"].groupby("mes")["valor"].sum()
         meses_todos = sorted(set(df_hist["mes"].tolist()))
-
         ents = [df_ent.get(m, 0) for m in meses_todos]
         sais = [df_sai.get(m, 0) for m in meses_todos]
         saldos_hist = [e - s for e, s in zip(ents, sais)]
@@ -493,12 +849,8 @@ with tab_dash:
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Gráfico categorias + Transações ───────────────────────────────────────
-    col_flow, col_tx = st.columns([1.6,1])
-    cats_saida = {}
-    for t in txs:
-        if t["tipo"]=="saida":
-            cats_saida[t["categoria"]] = cats_saida.get(t["categoria"],0) + t["valor"]
+    # ── Gráfico categorias + Feed em Tempo Real ───────────────────────────────
+    col_flow, col_feed = st.columns([1.6,1])
 
     with col_flow:
         st.markdown('<div class="panel"><div class="panel-title">📊 Despesas por Categoria</div>', unsafe_allow_html=True)
@@ -524,22 +876,23 @@ with tab_dash:
             st.info("Nenhuma despesa neste período.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with col_tx:
-        st.markdown('<div class="panel"><div class="panel-title">🧾 Últimas Transações</div>', unsafe_allow_html=True)
+    with col_feed:
+        st.markdown('<div class="panel"><div class="panel-title">⚡ Feed em Tempo Real</div>', unsafe_allow_html=True)
         if txs:
-            for t in txs[:7]:
-                sinal = "+" if t["tipo"]=="entrada" else "-"
-                cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
-                borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
-                rec_badge = ' <span style="font-size:9px;background:rgba(124,58,237,0.3);color:#c4b5fd;padding:1px 6px;border-radius:6px;margin-left:4px">🔄</span>' if t.get("recorrente") else ""
+            for t in txs[:6]:
+                tipo_cls = "in" if t["tipo"]=="entrada" else "out"
+                dot_cls  = "dot-in" if t["tipo"]=="entrada" else "dot-out"
+                sinal    = "+" if t["tipo"]=="entrada" else "-"
+                rec_badge = ' <span style="font-size:9px;background:rgba(124,58,237,0.3);color:#c4b5fd;padding:1px 5px;border-radius:5px">🔄</span>' if t.get("recorrente") else ""
+                dt_fmt = str(t["data"])[:10]
                 st.markdown(f"""
-                <div class="tx-row" style="border-left:3px solid {borda}">
-                  <div style="font-size:20px;width:36px;text-align:center;flex-shrink:0">{t['icone']}</div>
+                <div class="activity-item">
+                  <div class="act-dot {dot_cls}"></div>
                   <div style="flex:1;min-width:0">
-                    <div style="font-size:13px;font-weight:600">{t['nome']}{rec_badge}</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.38);margin-top:3px">{t['categoria']} · {str(t['data'])[:10]}</div>
+                    <div class="act-name">{t['icone']} {t['nome']}{rec_badge}</div>
+                    <div class="act-time">{t['categoria']} · {dt_fmt}</div>
                   </div>
-                  <div class="{cls}">{sinal}{fmt(t['valor'])}</div>
+                  <div class="act-amount {tipo_cls}">{sinal}{fmt(t['valor'])}</div>
                 </div>""", unsafe_allow_html=True)
         else:
             st.info("Sem transações neste período.")
@@ -547,8 +900,103 @@ with tab_dash:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Donut + Metas + IA ────────────────────────────────────────────────────
-    col_ring, col_mv = st.columns(2)
+    # ── Metas Circulares + Oracle + Oportunidades ─────────────────────────────
+    col_circ, col_orac = st.columns([1.5, 1])
+
+    with col_circ:
+        st.markdown('<div class="panel"><div class="panel-title">🎯 Metas — Progresso Circular</div>', unsafe_allow_html=True)
+        if metas:
+            # Até 3 metas por linha
+            for i in range(0, len(metas[:6]), 3):
+                chunk = metas[i:i+3]
+                cols_m = st.columns(len(chunk))
+                for col_m, m in zip(cols_m, chunk):
+                    pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
+                    falta = max(m["total"] - m["atual"], 0)
+                    # circumference r=38 => 2*pi*38 ≈ 238.76
+                    circ = 238.76
+                    dash_fill = circ * pct / 100
+                    dash_empty = circ - dash_fill
+
+                    prazo_html = ""
+                    if m.get("prazo"):
+                        try:
+                            prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                            dias_rest = (prazo_dt - date.today()).days
+                            if dias_rest > 0:
+                                prazo_html = f'<div class="goal-prazo">📅 {dias_rest}d restantes</div>'
+                            elif dias_rest == 0:
+                                prazo_html = '<div class="goal-prazo" style="color:#f87171">Vence hoje!</div>'
+                            else:
+                                prazo_html = '<div class="goal-prazo" style="color:#f87171">Vencida</div>'
+                        except:
+                            pass
+
+                    col_m.markdown(f"""
+                    <div class="goal-circ-card">
+                      <div class="circ-wrap">
+                        <svg class="circ-svg" viewBox="0 0 90 90">
+                          <circle class="circ-bg" cx="45" cy="45" r="38"/>
+                          <circle class="circ-fill" cx="45" cy="45" r="38"
+                            stroke="{m['cor']}"
+                            stroke-dasharray="{dash_fill:.1f} {dash_empty:.1f}"/>
+                        </svg>
+                        <div class="circ-center" style="color:{m['cor']}">{pct}%</div>
+                      </div>
+                      <div class="goal-name-circ">{m['nome']}</div>
+                      <div class="goal-detail-circ">{fmt(m['atual'])} / {fmt(m['total'])}</div>
+                      <div class="goal-remain">Falta {fmt(falta)}</div>
+                      {prazo_html}
+                    </div>""", unsafe_allow_html=True)
+        else:
+            st.info("Nenhuma meta cadastrada. Adicione metas para visualizar o progresso.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_orac:
+        # Oracle IA
+        st.markdown('<div class="panel"><div class="panel-title">🔮 Oracle IA + Oportunidades</div>', unsafe_allow_html=True)
+        oracle_texto, oracle_tags = gerar_oracle(entradas, saidas, cats_saida, orcs, hist, mes_sel, ano_sel, metas, invs)
+        tags_html = "".join(
+            f'<span class="otag otag-{cls}">{txt}</span>'
+            for txt, cls in oracle_tags
+        )
+        st.markdown(f"""
+        <div class="oracle-box">
+          <div class="oracle-head"><span class="oracle-dot"></span>Oracle IA · Análise em tempo real</div>
+          <div class="oracle-text">{oracle_texto}</div>
+          <div class="oracle-tags">{tags_html}</div>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Oportunidades
+        opps = gerar_oportunidades(entradas, saidas, invs, metas)
+        opps_html = ""
+        for opp in opps:
+            opps_html += f"""
+            <div class="opp-item {opp['class']}">
+              <div class="opp-icon">{opp['icon']}</div>
+              <div class="opp-info">
+                <div class="opp-title-txt">{opp['title']}</div>
+                <div class="opp-desc-txt">{opp['desc']}</div>
+              </div>
+              <div class="opp-gain">{opp['gain']}</div>
+            </div>"""
+        st.markdown(f"""
+        <div style="margin-top:4px">
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.35);font-weight:800;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span style="width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,#7c3aed,#06b6d4);display:inline-block"></span>
+            Oportunidades <span class="tag-new">NOVO</span>
+          </div>
+          {opps_html}
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Donut ─────────────────────────────────────────────────────────────────
+    col_ring, col_tx = st.columns(2)
     with col_ring:
         st.markdown('<div class="panel"><div class="panel-title">🍩 Distribuição de Despesas</div>', unsafe_allow_html=True)
         if cats_saida:
@@ -571,47 +1019,25 @@ with tab_dash:
             st.info("Nenhuma despesa lançada.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with col_mv:
-        st.markdown('<div class="panel"><div class="panel-title">🎯 Metas Financeiras</div>', unsafe_allow_html=True)
-        for m in metas[:3]:
-            pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
-            # Cálculo de dias restantes se tiver prazo
-            prazo_info = ""
-            if m.get("prazo"):
-                try:
-                    prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
-                    dias_rest = (prazo_dt - date.today()).days
-                    if dias_rest > 0:
-                        prazo_info = f' · <span style="color:{m["cor"]}">{dias_rest}d restantes</span>'
-                    elif dias_rest == 0:
-                        prazo_info = ' · <span style="color:#f87171">Vence hoje!</span>'
-                    else:
-                        prazo_info = ' · <span style="color:#f87171">Vencida</span>'
-                except:
-                    pass
-            st.markdown(f"""
-            <div style="margin-bottom:16px">
-              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
-                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m['nome']}{prazo_info}</span>
-                <span style="color:{m['cor']};font-weight:700">{pct}%</span>
-              </div>
-              <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}99)"></div>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>{fmt(m['atual'])}</span><span>{fmt(m['total'])}</span>
-              </div>
-            </div>""", unsafe_allow_html=True)
-        if not metas:
-            st.info("Nenhuma meta cadastrada.")
-
-        # IA Insight dinâmico e rico
-        insight = gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist, mes_sel, ano_sel)
-        st.markdown(f"""
-        <div class="ai-box">
-          <div class="ai-label">IA Financial Insight</div>
-          <div class="ai-text">{insight}</div>
-        </div>""", unsafe_allow_html=True)
+    with col_tx:
+        st.markdown('<div class="panel"><div class="panel-title">🧾 Últimas Transações</div>', unsafe_allow_html=True)
+        if txs:
+            for t in txs[:7]:
+                sinal = "+" if t["tipo"]=="entrada" else "-"
+                cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
+                borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
+                rec_badge = ' <span style="font-size:9px;background:rgba(124,58,237,0.3);color:#c4b5fd;padding:1px 6px;border-radius:6px;margin-left:4px">🔄</span>' if t.get("recorrente") else ""
+                st.markdown(f"""
+                <div class="tx-row" style="border-left:3px solid {borda}">
+                  <div style="font-size:20px;width:36px;text-align:center;flex-shrink:0">{t['icone']}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:600">{t['nome']}{rec_badge}</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.38);margin-top:3px">{t['categoria']} · {str(t['data'])[:10]}</div>
+                  </div>
+                  <div class="{cls}">{sinal}{fmt(t['valor'])}</div>
+                </div>""", unsafe_allow_html=True)
+        else:
+            st.info("Sem transações neste período.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ── Exportar ──────────────────────────────────────────────────────────────
@@ -677,7 +1103,6 @@ with tab_lanc:
                 st.error("Digite uma descrição.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── Mini resumo rápido ─────────────────────────────────────────────
         hoje2 = date.today()
         txs_mes_atual = db_lancamentos(mes=hoje2.month, ano=hoje2.year)
         ent_m = sum(t["valor"] for t in txs_mes_atual if t["tipo"]=="entrada")
@@ -704,14 +1129,10 @@ with tab_lanc:
 
     with col_lista:
         st.markdown('<div class="panel"><div class="panel-title">📋 Todos os Lançamentos</div>', unsafe_allow_html=True)
-
-        # Filtros
         fc1,fc2,fc3 = st.columns(3)
         with fc1: filtro_tipo = st.selectbox("Tipo", ["Todos","Entradas","Saídas"], key="filtro_tipo")
         with fc2: filtro_cat  = st.selectbox("Categoria", ["Todas"]+CATS, key="filtro_cat")
         with fc3: filtro_mes  = st.selectbox("Mês", ["Todos"]+MESES_BR, key="filtro_mes_lanc")
-
-        # Busca textual
         busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
 
         txs_all = db_lancamentos()
@@ -724,10 +1145,8 @@ with tab_lanc:
         if busca.strip():
             txs_all = [t for t in txs_all if busca.lower() in t["nome"].lower()]
 
-        total_filtrado   = sum(t["valor"] for t in txs_all)
         total_entradas_f = sum(t["valor"] for t in txs_all if t["tipo"]=="entrada")
         total_saidas_f   = sum(t["valor"] for t in txs_all if t["tipo"]=="saida")
-
         st.markdown(f"""
         <div style="display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px;flex-wrap:wrap">
           <span>{len(txs_all)} lançamentos</span>
@@ -738,7 +1157,6 @@ with tab_lanc:
 
         if not txs_all:
             st.info("Nenhum lançamento encontrado.")
-
         for t in txs_all:
             sinal = "+" if t["tipo"]=="entrada" else "-"
             cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
@@ -792,19 +1210,19 @@ with tab_invest:
         for inv in invs_list:
             pct       = round(inv["valor"]/total_port*100) if total_port>0 else 0
             chg_color = "#4ade80" if str(inv["variacao"]).startswith("+") else "#f87171"
+            chg_cls   = "invest-chg-up" if str(inv["variacao"]).startswith("+") else "invest-chg-dn"
             ci,cd     = st.columns([5,1])
             with ci:
                 st.markdown(f"""
-                <div class="tx-row">
-                  <div style="width:10px;height:10px;border-radius:50%;background:{inv['cor']};flex-shrink:0;
-                              box-shadow:0 0 12px {inv['cor']},0 0 24px {inv['cor']}55"></div>
-                  <div style="flex:1;margin-left:12px;min-width:0">
-                    <div style="font-size:13px;font-weight:600">{inv['nome']}</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.38)">{pct}% do portfolio</div>
+                <div class="invest-pill">
+                  <div class="invest-pill-dot" style="background:{inv['cor']};box-shadow:0 0 12px {inv['cor']}88"></div>
+                  <div style="flex:1;min-width:0">
+                    <div class="invest-pill-name">{inv['nome']}</div>
+                    <div class="invest-pill-pct">{pct}% do portfolio</div>
                   </div>
-                  <div style="text-align:right;flex-shrink:0">
-                    <div style="font-size:13px;font-weight:800">{fmt(inv['valor'])}</div>
-                    <div style="font-size:11px;color:{chg_color};font-weight:700">{inv['variacao']}</div>
+                  <div class="invest-pill-right">
+                    <div class="invest-pill-val">{fmt(inv['valor'])}</div>
+                    <div class="{chg_cls}">{inv['variacao']}</div>
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
@@ -820,8 +1238,6 @@ with tab_invest:
         invs2 = db_investimentos()
         if invs2:
             total_p2 = sum(i["valor"] for i in invs2)
-
-            # Gráfico de pizza
             fig_port = go.Figure(go.Pie(
                 labels=[i["nome"] for i in invs2], values=[i["valor"] for i in invs2],
                 hole=0.70, marker=dict(colors=[i["cor"] for i in invs2],
@@ -835,17 +1251,16 @@ with tab_invest:
                     font=dict(size=15, color="white", family="Space Grotesk"), showarrow=False)])
             st.plotly_chart(fig_port, use_container_width=True, config={"displayModeBar":False})
 
-            # Rentabilidade estimada
             st.markdown('<div class="panel-title" style="margin-top:16px">📈 Rentabilidade por Ativo</div>', unsafe_allow_html=True)
             for inv in invs2:
-                chg_str = str(inv["variacao"]).replace("%","").replace("+","").strip()
+                chg_str_v = str(inv["variacao"]).replace("%","").replace("+","").strip()
                 try:
-                    chg_val = float(chg_str)
+                    chg_val = float(chg_str_v)
                     rendimento = inv["valor"] * chg_val / 100
                     cor = "#4ade80" if chg_val >= 0 else "#f87171"
                     sinal = "+" if chg_val >= 0 else ""
                     st.markdown(f"""
-                    <div class="tx-row" style="margin-bottom:6px">
+                    <div class="invest-pill" style="margin-bottom:6px">
                       <div style="width:8px;height:8px;border-radius:50%;background:{inv['cor']};flex-shrink:0"></div>
                       <div style="flex:1;margin-left:10px;font-size:12px">{inv['nome']}</div>
                       <div style="color:{cor};font-size:12px;font-weight:700">{sinal}{fmt(rendimento)}</div>
@@ -886,8 +1301,10 @@ with tab_metas:
         for m in metas_list:
             pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
             falta = m["total"] - m["atual"]
+            circ = 238.76
+            dash_fill = circ * pct / 100
+            dash_empty = circ - dash_fill
 
-            # Prazo e projeção
             prazo_html = ""
             if m.get("prazo"):
                 try:
@@ -895,27 +1312,30 @@ with tab_metas:
                     dias_rest = (prazo_dt - date.today()).days
                     if dias_rest > 0 and falta > 0:
                         aporte_diario = falta / dias_rest
-                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">📅 {dias_rest} dias restantes · Aporte diário necessário: {fmt(aporte_diario)}</div>'
+                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">📅 {dias_rest} dias restantes · Aporte diário: {fmt(aporte_diario)}</div>'
                     elif dias_rest <= 0:
                         prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">⚠️ Prazo vencido</div>'
                 except:
                     pass
 
             st.markdown(f"""
-            <div style="margin-bottom:8px">
-              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px">
-                <span style="color:rgba(255,255,255,0.85)">{m['nome']}</span>
-                <span style="color:{m['cor']};text-shadow:0 0 12px {m['cor']}88">{pct}%</span>
+            <div style="margin-bottom:10px;display:flex;align-items:center;gap:16px">
+              <div style="flex-shrink:0">
+                <div class="circ-wrap" style="width:70px;height:70px">
+                  <svg class="circ-svg" viewBox="0 0 90 90" style="width:70px;height:70px">
+                    <circle class="circ-bg" cx="45" cy="45" r="38"/>
+                    <circle class="circ-fill" cx="45" cy="45" r="38"
+                      stroke="{m['cor']}"
+                      stroke-dasharray="{dash_fill:.1f} {dash_empty:.1f}"/>
+                  </svg>
+                  <div class="circ-center" style="color:{m['cor']};font-size:12px">{pct}%</div>
+                </div>
               </div>
-              <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}88)"></div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600;margin-bottom:4px">{m['nome']}</div>
+                <div style="font-size:11px;color:rgba(255,255,255,0.4)">{fmt(m['atual'])} / {fmt(m['total'])} · Falta {fmt(max(falta,0))}</div>
+                {prazo_html}
               </div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>Atual: {fmt(m['atual'])}</span>
-                <span style="color:rgba(255,255,255,0.45)">Falta: {fmt(max(falta,0))}</span>
-                <span>Meta: {fmt(m['total'])}</span>
-              </div>
-              {prazo_html}
             </div>""", unsafe_allow_html=True)
             cu,cd = st.columns([4,1])
             with cu:
@@ -938,7 +1358,8 @@ with tab_orc:
     st.markdown("""
     <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-bottom:16px;line-height:1.6">
       Defina um limite de gasto por categoria. Quando você passar de <b style="color:#f87171">80%</b>
-      do limite, um alerta aparece automaticamente no Dashboard.
+      do limite, um alerta aparece automaticamente no Dashboard — e acima de 100% ativa o
+      <b style="color:#f87171">⚔️ Modo Guerra</b>.
     </div>""", unsafe_allow_html=True)
 
     col_of, col_ol = st.columns([1,1.5])
@@ -951,7 +1372,6 @@ with tab_orc:
             st.success(f"✅ Limite de {fmt(orc_limite)}/mês para {orc_cat} salvo!"); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Resumo de orçamento
         orcs_resumo = db_orcamentos()
         if orcs_resumo:
             total_orcado = sum(o["limite"] for o in orcs_resumo)
@@ -975,7 +1395,6 @@ with tab_orc:
         if not orcs_list:
             st.info("Nenhum limite configurado ainda.")
 
-        # Ordenar por % utilizado (mais crítico primeiro)
         orcs_sorted = sorted(orcs_list,
                               key=lambda o: cats_gastos.get(o["categoria"],0)/o["limite"] if o["limite"]>0 else 0,
                               reverse=True)
@@ -984,7 +1403,7 @@ with tab_orc:
             limite = o["limite"]
             pct    = min(round(gasto/limite*100), 100) if limite>0 else 0
             cor    = "#f87171" if pct>=80 else ("#fbbf24" if pct>=60 else "#4ade80")
-            alerta = " ⚠️" if pct>=80 else ""
+            alerta = " ⚔️" if pct>=100 else (" ⚠️" if pct>=80 else "")
             ci,cd  = st.columns([6,1])
             with ci:
                 st.markdown(f"""
@@ -1051,7 +1470,6 @@ with tab_rec:
         for r in recs:
             ri,rd = st.columns([6,1])
             with ri:
-                # Próximo vencimento
                 hoje3 = date.today()
                 dia_rec = min(r["dia_do_mes"], 28)
                 try:
