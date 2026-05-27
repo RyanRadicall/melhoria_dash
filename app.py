@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from supabase import create_client, Client
 from market import get_cotacoes
 from export import gerar_excel
@@ -40,6 +40,14 @@ MESES_BR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","D
 def fmt(v):
     return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
+def fmt_compact(v):
+    """Formata valor de forma compacta para KPIs grandes"""
+    if v >= 1_000_000:
+        return f"R$ {v/1_000_000:.1f}M"
+    elif v >= 1_000:
+        return f"R$ {v/1_000:.1f}K"
+    return f"R$ {v:,.0f}".replace(",",".")
+
 def plotly_cfg():
     return dict(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -52,30 +60,33 @@ def uid():
 
 def primeiro_nome():
     nome = st.session_state.get("display_name", "")
-
     if nome:
         return nome
-
     e = st.session_state.get("user_email", "")
-
     if e:
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
-
     return "Usuário"
+
+# ── Cache helpers (TTL de 60s para evitar excesso de queries) ─────────────────
+@st.cache_data(ttl=60)
+def cached_lancamentos_historico(_uid):
+    return supabase.table("lancamentos").select("data,valor,tipo,categoria").eq("user_id",_uid).execute().data or []
+
+@st.cache_data(ttl=60)
+def cached_lancamentos(_uid, mes=None, ano=None):
+    q = supabase.table("lancamentos").select("*").eq("user_id", _uid)
+    if mes and ano:
+        ultimo_dia = calendar.monthrange(ano, mes)[1]
+        q = q.gte("data", f"{ano}-{mes:02d}-01").lte("data", f"{ano}-{mes:02d}-{ultimo_dia:02d}")
+    return q.order("data", desc=True).execute().data or []
+
+def invalidar_cache():
+    cached_lancamentos.clear()
+    cached_lancamentos_historico.clear()
 
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
 def db_lancamentos(mes=None, ano=None):
-    q = supabase.table("lancamentos").select("*").eq("user_id", uid())
-
-    if mes and ano:
-        ultimo_dia = calendar.monthrange(ano, mes)[1]
-
-        inicio = f"{ano}-{mes:02d}-01"
-        fim = f"{ano}-{mes:02d}-{ultimo_dia:02d}"
-
-        q = q.gte("data", inicio).lte("data", fim)
-
-    return q.order("data", desc=True).execute().data or []
+    return cached_lancamentos(uid(), mes, ano)
 
 def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
     supabase.table("lancamentos").insert({
@@ -83,13 +94,14 @@ def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
         "valor":val,"tipo":tipo,"icone":icone,
         "data":str(dt),"recorrente":recorrente,
     }).execute()
+    invalidar_cache()
 
 def db_del_lancamento(rid):
     supabase.table("lancamentos").delete().eq("id",rid).execute()
+    invalidar_cache()
 
 def db_lancamentos_historico():
-    """Retorna todos os lançamentos agrupados por mês para o gráfico histórico."""
-    return supabase.table("lancamentos").select("data,valor,tipo").eq("user_id",uid()).execute().data or []
+    return cached_lancamentos_historico(uid())
 
 # ── DB: Investimentos ─────────────────────────────────────────────────────────
 def db_investimentos():
@@ -107,10 +119,11 @@ def db_del_investimento(rid):
 def db_metas():
     return supabase.table("metas").select("*").eq("user_id",uid()).execute().data or []
 
-def db_add_meta(nome, atual, total, cor):
-    supabase.table("metas").insert({
-        "user_id":uid(),"nome":nome,"atual":atual,"total":total,"cor":cor
-    }).execute()
+def db_add_meta(nome, atual, total, cor, prazo=None):
+    payload = {"user_id":uid(),"nome":nome,"atual":atual,"total":total,"cor":cor}
+    if prazo:
+        payload["prazo"] = str(prazo)
+    supabase.table("metas").insert(payload).execute()
 
 def db_update_meta(rid, atual):
     supabase.table("metas").update({"atual":atual}).eq("id",rid).execute()
@@ -146,34 +159,94 @@ def db_del_recorrente(rid):
     supabase.table("recorrentes").delete().eq("id",rid).execute()
 
 def processar_recorrentes():
-    """
-    Verifica se cada lançamento recorrente já foi inserido no mês atual.
-    Se não, insere automaticamente.
-    """
     hoje = date.today()
-    mes_atual = f"{hoje.year}-{hoje.month:02d}"
     recorrentes = db_recorrentes()
     if not recorrentes:
         return 0
-
-    # Busca lançamentos do mês com flag recorrente
     lanc_mes = supabase.table("lancamentos").select("nome,recorrente,data")\
         .eq("user_id",uid()).eq("recorrente",True)\
         .gte("data",f"{hoje.year}-{hoje.month:02d}-01")\
         .lte("data",f"{hoje.year}-{hoje.month:02d}-31")\
         .execute().data or []
-
     nomes_ja_inseridos = {l["nome"] for l in lanc_mes}
     inseridos = 0
-
     for r in recorrentes:
         if r["nome"] not in nomes_ja_inseridos:
             dia = min(r["dia_do_mes"], 28)
             dt_lanc = date(hoje.year, hoje.month, dia)
             db_add_lancamento(r["nome"], r["categoria"], r["valor"], "saida", r["icone"], dt_lanc, recorrente=True)
             inseridos += 1
-
     return inseridos
+
+# ── Análise avançada de IA ────────────────────────────────────────────────────
+def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano_sel):
+    """Gera insights financeiros ricos com análise histórica e projeções."""
+    insights = []
+
+    if entradas == 0:
+        return "💡 Adicione lançamentos para ativar os insights financeiros."
+
+    # Taxa de poupança
+    poupanca = entradas - saidas
+    taxa_poupar = round(poupanca / entradas * 100) if entradas > 0 else 0
+
+    if taxa_poupar >= 30:
+        insights.append(f"🏆 Taxa de poupança excelente: <b>{taxa_poupar}%</b> da renda guardada.")
+    elif taxa_poupar >= 10:
+        insights.append(f"✅ Taxa de poupança de <b>{taxa_poupar}%</b>. Meta recomendada: 20%.")
+    elif taxa_poupar >= 0:
+        insights.append(f"⚠️ Taxa de poupança baixa: <b>{taxa_poupar}%</b>. Tente reduzir despesas.")
+    else:
+        insights.append(f"🔴 Déficit de <b>{fmt(abs(poupanca))}</b> neste período. Receita insuficiente.")
+
+    # Maior categoria de gasto
+    if cats_saida:
+        maior_cat = max(cats_saida, key=cats_saida.get)
+        pct_maior = round(cats_saida[maior_cat] / saidas * 100) if saidas > 0 else 0
+        insights.append(f"📊 <b>{maior_cat}</b> consome {pct_maior}% das despesas ({fmt(cats_saida[maior_cat])}).")
+
+    # Comparação com mês anterior
+    if hist_data:
+        df = pd.DataFrame(hist_data)
+        df["mes"] = pd.to_datetime(df["data"]).dt.to_period("M")
+        periodo_atual = pd.Period(f"{ano_sel}-{mes_sel:02d}", "M")
+        periodo_ant = periodo_atual - 1
+
+        saidas_ant = df[(df["mes"] == periodo_ant) & (df["tipo"] == "saida")]["valor"].sum()
+        if saidas_ant > 0 and saidas > 0:
+            variacao = round((saidas - saidas_ant) / saidas_ant * 100)
+            if variacao > 15:
+                insights.append(f"📈 Despesas <b>+{variacao}%</b> vs mês anterior. Atenção!")
+            elif variacao < -10:
+                insights.append(f"📉 Despesas <b>{variacao}%</b> vs mês anterior. Ótimo controle!")
+            else:
+                insights.append(f"➡️ Despesas estáveis vs mês anterior ({variacao:+d}%).")
+
+    # Projeção do mês (dias corridos)
+    hoje = date.today()
+    if mes_sel == hoje.month and ano_sel == hoje.year and saidas > 0:
+        dia_atual = hoje.day
+        dias_no_mes = calendar.monthrange(ano_sel, mes_sel)[1]
+        projecao = (saidas / dia_atual) * dias_no_mes
+        if projecao > entradas:
+            insights.append(f"🔮 Projeção: <b>{fmt(projecao)}</b> em despesas até fim do mês — acima da receita!")
+        else:
+            insights.append(f"🔮 Projeção de gastos até fim do mês: <b>{fmt(projecao)}</b>.")
+
+    # Alertas de orçamento
+    orc_map = {o["categoria"]: o["limite"] for o in orcs}
+    alertas_orc = []
+    for cat, gasto in cats_saida.items():
+        if cat in orc_map:
+            pct_orc = round(gasto / orc_map[cat] * 100)
+            if pct_orc >= 100:
+                alertas_orc.append(f"🔴 <b>{cat}</b>: orçamento estourado ({pct_orc}%)!")
+            elif pct_orc >= 80:
+                alertas_orc.append(f"🟠 <b>{cat}</b>: {pct_orc}% do orçamento usado.")
+    if alertas_orc:
+        insights.extend(alertas_orc)
+
+    return "<br>".join(insights) if insights else "💡 Continue registrando para receber insights personalizados."
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGIN
@@ -194,120 +267,66 @@ def tela_login():
     """, unsafe_allow_html=True)
 
     _, col, _ = st.columns([1,1.1,1])
-
     with col:
         st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-
-        aba = st.radio(
-            "",
-            ["Entrar","Criar conta"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="auth_aba"
-        )
-
+        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True,
+                       label_visibility="collapsed", key="auth_aba")
         st.markdown("<br>", unsafe_allow_html=True)
-
-        email = st.text_input(
-            "E-mail",
-            placeholder="seuemail@exemplo.com",
-            key="auth_email"
-        )
-
-        senha = st.text_input(
-            "Senha",
-            type="password",
-            placeholder="••••••••",
-            key="auth_senha"
-        )
-
+        email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
+        senha = st.text_input("Senha", type="password", placeholder="••••••••", key="auth_senha")
         nome = ""
-
         if aba == "Criar conta":
-            nome = st.text_input(
-                "Nome de exibição",
-                placeholder="Ex: Ryan",
-                key="auth_nome"
-            )
-
+            nome = st.text_input("Nome de exibição", placeholder="Ex: Ryan", key="auth_nome")
         st.markdown("<br>", unsafe_allow_html=True)
 
         if aba == "Entrar":
-
             if st.button("🔐 Entrar na plataforma", use_container_width=True, key="btn_login"):
-
                 if not email.strip() or not senha:
                     st.error("Preencha e-mail e senha.")
-
                 else:
                     try:
-                        res = supabase.auth.sign_in_with_password({
-                            "email": email.strip(),
-                            "password": senha
-                        })
-
+                        res = supabase.auth.sign_in_with_password({"email": email.strip(), "password": senha})
                         st.session_state.update({
                             "user_id": res.user.id,
                             "user_email": res.user.email,
                             "display_name": res.user.user_metadata.get("display_name", ""),
                             "logado": True
                         })
-
                         st.rerun()
-
                     except Exception as e:
                         err = str(e).lower()
-
                         if "invalid" in err or "credentials" in err:
                             st.error("❌ E-mail ou senha incorretos.")
-
                         elif "email not confirmed" in err:
                             st.error("📧 Confirme seu e-mail.")
-
                         else:
                             st.error(f"Erro: {e}")
-
         else:
-
             if st.button("✨ Criar minha conta", use_container_width=True, key="btn_signup"):
-
                 if not nome.strip():
                     st.error("Digite seu nome.")
-
                 elif not email.strip():
                     st.error("Digite seu e-mail.")
-
                 elif len(senha) < 6:
                     st.error("Senha precisa ter pelo menos 6 caracteres.")
-
                 else:
                     try:
                         res = supabase.auth.sign_up({
-                            "email": email.strip(),
-                            "password": senha,
-                            "options": {
-                                "data": {
-                                    "display_name": nome
-                                }
-                            }
+                            "email": email.strip(), "password": senha,
+                            "options": {"data": {"display_name": nome}}
                         })
-
                         if res.user:
                             st.success("✅ Conta criada! Clique em Entrar.")
-
                         else:
                             st.warning("Verifique seu e-mail para confirmar.")
-
                     except Exception as e:
                         err = str(e).lower()
-
                         if "already" in err:
                             st.error("E-mail já cadastrado. Use Entrar.")
-
                         else:
                             st.error(f"Erro: {e}")
-
         st.markdown("</div>", unsafe_allow_html=True)
+
 # ── Guard ─────────────────────────────────────────────────────────────────────
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
@@ -315,9 +334,7 @@ if not st.session_state["logado"]:
     tela_login()
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PROCESSAR RECORRENTES (roda 1x por sessão)
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Processar recorrentes (1x por sessão) ─────────────────────────────────────
 if "recorrentes_processados" not in st.session_state:
     try:
         n = processar_recorrentes()
@@ -327,19 +344,24 @@ if "recorrentes_processados" not in st.session_state:
         pass
     st.session_state["recorrentes_processados"] = True
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HEADER
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Header ────────────────────────────────────────────────────────────────────
 h1, h2 = st.columns([4,1])
 with h1:
     nome = primeiro_nome()
+    hoje = date.today()
+    hora = datetime.now().hour
+    saudacao = "Bom dia" if hora < 12 else ("Boa tarde" if hora < 18 else "Boa noite")
     st.markdown(f"""
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
       <div class="logo-text">Finance <span>PRO X</span></div>
       <div class="live-badge"><span class="live-dot"></span>Ao vivo</div>
       <div style="font-size:13px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.04);
                   border:1px solid rgba(255,255,255,0.07);border-radius:20px;padding:4px 14px;
-                  backdrop-filter:blur(10px)">👤 {nome}</div>
+                  backdrop-filter:blur(10px)">👤 {saudacao}, {nome}</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.2);padding:4px 10px;
+                  border-radius:12px;background:rgba(255,255,255,0.03)">
+        📅 {hoje.strftime("%d/%m/%Y")}
+      </div>
     </div>""", unsafe_allow_html=True)
 with h2:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -350,11 +372,11 @@ with h2:
             st.session_state.pop(k,None)
         st.rerun()
 
-# ── Ticker com cotações REAIS ─────────────────────────────────────────────────
+# ── Ticker ────────────────────────────────────────────────────────────────────
 cotacoes = get_cotacoes()
 ticker_html = '<div class="ticker-wrap">'
 for a in cotacoes:
-    cc    = "tick-up" if a["up"] else "tick-dn"
+    cc = "tick-up" if a["up"] else "tick-dn"
     arrow = "▲" if a["up"] else "▼"
     ticker_html += (f'<div class="tick-item"><div class="tick-sym">{a["sym"]}</div>'
                     f'<div class="tick-price">{a["price"]}</div>'
@@ -364,19 +386,14 @@ st.markdown(ticker_html, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_dash, tab_lanc, tab_invest, tab_metas, tab_orc, tab_rec = st.tabs([
-    "⚡  Dashboard",
-    "✏️  Lançamentos",
-    "📈  Investimentos",
-    "🎯  Metas",
-    "💰  Orçamento",
-    "🔄  Recorrentes",
+    "⚡  Dashboard", "✏️  Lançamentos", "📈  Investimentos",
+    "🎯  Metas", "💰  Orçamento", "🔄  Recorrentes",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_dash:
-    # Filtro de período
     hoje = date.today()
     col_f1, col_f2, col_f3 = st.columns([1,1,4])
     with col_f1:
@@ -389,6 +406,7 @@ with tab_dash:
     invs  = db_investimentos()
     metas = db_metas()
     orcs  = db_orcamentos()
+    hist  = db_lancamentos_historico()
 
     entradas   = sum(t["valor"] for t in txs if t["tipo"]=="entrada")
     saidas     = sum(t["valor"] for t in txs if t["tipo"]=="saida")
@@ -396,72 +414,83 @@ with tab_dash:
     invest     = sum(i["valor"] for i in invs)
     patrimonio = saldo + invest
 
-    # KPIs
-    kpis = [
-        ("💰","RECEITA",       fmt(entradas),   "Total recebido",     True,      "kpi-purple","#7c3aed"),
-        ("💸","DESPESAS",      fmt(saidas),     "Total gasto",        saidas==0, "kpi-blue",  "#2563eb"),
-        ("⚖️","SALDO",         fmt(saldo),      "Caixa disponível",   saldo>=0,  "kpi-green", "#16a34a"),
-        ("📊","INVESTIMENTOS", fmt(invest),     "Total aplicado",     True,      "kpi-amber", "#d97706"),
-        ("🏛️","PATRIMÔNIO",   fmt(patrimonio), "Patrimônio total",   True,      "kpi-rose",  "#e11d48"),
+    # Taxa de poupança
+    taxa_poupar = round(saldo / entradas * 100) if entradas > 0 else 0
+
+    # KPIs — 6 cards em 2 linhas de 3
+    kpis_row1 = [
+        ("💰","RECEITA",       fmt(entradas),   "Total recebido",       True,       "kpi-purple","#7c3aed"),
+        ("💸","DESPESAS",      fmt(saidas),     "Total gasto",          saidas==0,  "kpi-blue",  "#2563eb"),
+        ("⚖️","SALDO",         fmt(saldo),      "Caixa disponível",     saldo>=0,   "kpi-green", "#16a34a"),
     ]
-    cols = st.columns(5)
-    for col,(icon,label,value,delta,up,cls,glow) in zip(cols,kpis):
-        dc = "delta-up" if up else "delta-dn"
-        col.markdown(f"""
-        <div class="kpi-card {cls}">
-          <div class="kpi-holo"></div>
-          <div class="kpi-glow" style="background:{glow}"></div>
-          <div class="kpi-label">{icon}&nbsp; {label}</div>
-          <div class="kpi-value">{value}</div>
-          <div class="kpi-delta {dc}">{"▲" if up else "▼"} {delta}</div>
-        </div>""", unsafe_allow_html=True)
+    kpis_row2 = [
+        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",  taxa_poupar>=20, "kpi-teal",  "#0891b2"),
+        ("📊","INVESTIMENTOS", fmt(invest),     "Total aplicado",       True,       "kpi-amber", "#d97706"),
+        ("🏛️","PATRIMÔNIO",   fmt(patrimonio), "Patrimônio total",     True,       "kpi-rose",  "#e11d48"),
+    ]
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    for row in [kpis_row1, kpis_row2]:
+        cols = st.columns(3)
+        for col,(icon,label,value,delta,up,cls,glow) in zip(cols,row):
+            dc = "delta-up" if up else "delta-dn"
+            col.markdown(f"""
+            <div class="kpi-card {cls}">
+              <div class="kpi-holo"></div>
+              <div class="kpi-glow" style="background:{glow}"></div>
+              <div class="kpi-label">{icon}&nbsp; {label}</div>
+              <div class="kpi-value">{value}</div>
+              <div class="kpi-delta {dc}">{"▲" if up else "▼"} {delta}</div>
+            </div>""", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── GRÁFICO HISTÓRICO ─────────────────────────────────────────────────────
+    # ── Gráfico Histórico ─────────────────────────────────────────────────────
     st.markdown('<div class="panel"><div class="panel-title">📅 Histórico Mensal — Entradas vs Saídas</div>', unsafe_allow_html=True)
-    hist = db_lancamentos_historico()
     if hist:
         df_hist = pd.DataFrame(hist)
         df_hist["mes"] = pd.to_datetime(df_hist["data"]).dt.to_period("M").astype(str)
-        df_ent = df_hist[df_hist["tipo"]=="entrada"].groupby("mes")["valor"].sum().reset_index()
-        df_sai = df_hist[df_hist["tipo"]=="saida"].groupby("mes")["valor"].sum().reset_index()
+        df_ent = df_hist[df_hist["tipo"]=="entrada"].groupby("mes")["valor"].sum()
+        df_sai = df_hist[df_hist["tipo"]=="saida"].groupby("mes")["valor"].sum()
+        meses_todos = sorted(set(df_hist["mes"].tolist()))
 
-        meses_todos = sorted(set(df_ent["mes"].tolist() + df_sai["mes"].tolist()))
+        ents = [df_ent.get(m, 0) for m in meses_todos]
+        sais = [df_sai.get(m, 0) for m in meses_todos]
+        saldos_hist = [e - s for e, s in zip(ents, sais)]
 
         fig_hist = go.Figure()
-        fig_hist.add_trace(go.Scatter(
-            x=meses_todos,
-            y=[df_ent[df_ent["mes"]==m]["valor"].sum() for m in meses_todos],
-            name="Entradas", mode="lines+markers",
-            line=dict(color="#4ade80", width=2.5),
-            marker=dict(size=7, color="#4ade80", line=dict(color="#fff",width=1.5)),
-            fill="tozeroy", fillcolor="rgba(74,222,128,0.08)",
+        fig_hist.add_trace(go.Bar(
+            x=meses_todos, y=ents, name="Entradas",
+            marker=dict(color="rgba(74,222,128,0.7)", line=dict(width=0)),
             hovertemplate="<b>%{x}</b><br>Entradas: R$ %{y:,.2f}<extra></extra>",
         ))
-        fig_hist.add_trace(go.Scatter(
-            x=meses_todos,
-            y=[df_sai[df_sai["mes"]==m]["valor"].sum() for m in meses_todos],
-            name="Saídas", mode="lines+markers",
-            line=dict(color="#f87171", width=2.5),
-            marker=dict(size=7, color="#f87171", line=dict(color="#fff",width=1.5)),
-            fill="tozeroy", fillcolor="rgba(248,113,113,0.08)",
+        fig_hist.add_trace(go.Bar(
+            x=meses_todos, y=sais, name="Saídas",
+            marker=dict(color="rgba(248,113,113,0.7)", line=dict(width=0)),
             hovertemplate="<b>%{x}</b><br>Saídas: R$ %{y:,.2f}<extra></extra>",
         ))
+        fig_hist.add_trace(go.Scatter(
+            x=meses_todos, y=saldos_hist, name="Saldo",
+            mode="lines+markers",
+            line=dict(color="#c4b5fd", width=2, dash="dot"),
+            marker=dict(size=6, color="#c4b5fd"),
+            hovertemplate="<b>%{x}</b><br>Saldo: R$ %{y:,.2f}<extra></extra>",
+            yaxis="y2",
+        ))
         fig_hist.update_layout(
-            **plotly_cfg(), height=200,
+            **plotly_cfg(), height=220,
+            barmode="group", bargap=0.2, bargroupgap=0.05,
             showlegend=True,
             legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,
                         font=dict(size=11,color="rgba(255,255,255,0.6)"),bgcolor="rgba(0,0,0,0)"),
             xaxis=dict(gridcolor="rgba(255,255,255,0.04)",tickfont=dict(size=10)),
             yaxis=dict(gridcolor="rgba(255,255,255,0.04)",tickfont=dict(size=10)),
+            yaxis2=dict(overlaying="y", side="right", tickfont=dict(size=9, color="rgba(196,181,253,0.6)"),
+                        gridcolor="rgba(0,0,0,0)", showgrid=False),
             hovermode="x unified",
         )
         st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar":False})
     else:
         st.info("Adicione lançamentos para ver o histórico mensal.")
     st.markdown("</div>", unsafe_allow_html=True)
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Gráfico categorias + Transações ───────────────────────────────────────
@@ -474,18 +503,23 @@ with tab_dash:
     with col_flow:
         st.markdown('<div class="panel"><div class="panel-title">📊 Despesas por Categoria</div>', unsafe_allow_html=True)
         if cats_saida:
+            cats_ord = sorted(cats_saida.items(), key=lambda x: -x[1])
             fig_bar = go.Figure()
-            for cat,val in sorted(cats_saida.items(),key=lambda x:-x[1]):
+            for cat, val in cats_ord:
                 fig_bar.add_trace(go.Bar(
-                    x=[cat],y=[val],
-                    marker=dict(color=CORES_MAP.get(cat,"#7c3aed"),line=dict(width=0),opacity=0.88),
+                    x=[cat], y=[val],
+                    marker=dict(color=CORES_MAP.get(cat,"#7c3aed"), line=dict(width=0), opacity=0.88),
                     name=cat,
+                    text=[fmt(val)],
+                    textposition="outside",
+                    textfont=dict(size=10, color="rgba(255,255,255,0.5)"),
                     hovertemplate=f"<b>{cat}</b><br>{fmt(val)}<extra></extra>",
                 ))
-            fig_bar.update_layout(**plotly_cfg(),height=240,showlegend=False,bargap=0.32,
-                xaxis=dict(gridcolor="rgba(0,0,0,0)",tickfont=dict(size=11,color="rgba(255,255,255,0.45)")),
-                yaxis=dict(gridcolor="rgba(255,255,255,0.05)",tickfont=dict(size=10,color="rgba(255,255,255,0.35)")))
-            st.plotly_chart(fig_bar,use_container_width=True,config={"displayModeBar":False})
+            fig_bar.update_layout(**plotly_cfg(), height=240, showlegend=False, bargap=0.32,
+                xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=11, color="rgba(255,255,255,0.45)")),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)", tickfont=dict(size=10, color="rgba(255,255,255,0.35)"),
+                           showticklabels=False))
+            st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar":False})
         else:
             st.info("Nenhuma despesa neste período.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -497,7 +531,7 @@ with tab_dash:
                 sinal = "+" if t["tipo"]=="entrada" else "-"
                 cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
                 borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
-                rec_badge = ' <span style="font-size:9px;background:rgba(124,58,237,0.3);color:#c4b5fd;padding:1px 6px;border-radius:6px;margin-left:4px">🔄 recorrente</span>' if t.get("recorrente") else ""
+                rec_badge = ' <span style="font-size:9px;background:rgba(124,58,237,0.3);color:#c4b5fd;padding:1px 6px;border-radius:6px;margin-left:4px">🔄</span>' if t.get("recorrente") else ""
                 st.markdown(f"""
                 <div class="tx-row" style="border-left:3px solid {borda}">
                   <div style="font-size:20px;width:36px;text-align:center;flex-shrink:0">{t['icone']}</div>
@@ -513,7 +547,7 @@ with tab_dash:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Donut + Metas ─────────────────────────────────────────────────────────
+    # ── Donut + Metas + IA ────────────────────────────────────────────────────
     col_ring, col_mv = st.columns(2)
     with col_ring:
         st.markdown('<div class="panel"><div class="panel-title">🍩 Distribuição de Despesas</div>', unsafe_allow_html=True)
@@ -523,28 +557,42 @@ with tab_dash:
                 values=list(cats_saida.values()),
                 hole=0.72,
                 marker=dict(colors=[CORES_MAP.get(c,"#7c3aed") for c in cats_saida],
-                            line=dict(color="rgba(2,4,10,0.6)",width=2)),
+                            line=dict(color="rgba(2,4,10,0.6)", width=2)),
                 textinfo="none",
                 hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
             ))
-            fig_ring.update_layout(**plotly_cfg(),height=230,showlegend=True,
-                legend=dict(font=dict(size=11,color="rgba(255,255,255,0.6)"),bgcolor="rgba(0,0,0,0)",
-                            orientation="v",x=0.75,y=0.5,xanchor="left",yanchor="middle"),
-                annotations=[dict(text=f"<b>{fmt(saidas)}</b>",x=0.35,y=0.5,
-                    font=dict(size=13,color="white",family="Space Grotesk"),showarrow=False)])
-            st.plotly_chart(fig_ring,use_container_width=True,config={"displayModeBar":False})
+            fig_ring.update_layout(**plotly_cfg(), height=230, showlegend=True,
+                legend=dict(font=dict(size=11,color="rgba(255,255,255,0.6)"), bgcolor="rgba(0,0,0,0)",
+                            orientation="v", x=0.75, y=0.5, xanchor="left", yanchor="middle"),
+                annotations=[dict(text=f"<b>{fmt(saidas)}</b>", x=0.35, y=0.5,
+                    font=dict(size=13, color="white", family="Space Grotesk"), showarrow=False)])
+            st.plotly_chart(fig_ring, use_container_width=True, config={"displayModeBar":False})
         else:
             st.info("Nenhuma despesa lançada.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_mv:
         st.markdown('<div class="panel"><div class="panel-title">🎯 Metas Financeiras</div>', unsafe_allow_html=True)
-        for m in metas[:4]:
-            pct = min(round(m["atual"]/m["total"]*100),100) if m["total"]>0 else 0
+        for m in metas[:3]:
+            pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
+            # Cálculo de dias restantes se tiver prazo
+            prazo_info = ""
+            if m.get("prazo"):
+                try:
+                    prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    dias_rest = (prazo_dt - date.today()).days
+                    if dias_rest > 0:
+                        prazo_info = f' · <span style="color:{m["cor"]}">{dias_rest}d restantes</span>'
+                    elif dias_rest == 0:
+                        prazo_info = ' · <span style="color:#f87171">Vence hoje!</span>'
+                    else:
+                        prazo_info = ' · <span style="color:#f87171">Vencida</span>'
+                except:
+                    pass
             st.markdown(f"""
             <div style="margin-bottom:16px">
               <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
-                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m['nome']}</span>
+                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m['nome']}{prazo_info}</span>
                 <span style="color:{m['cor']};font-weight:700">{pct}%</span>
               </div>
               <div class="goal-track">
@@ -554,28 +602,11 @@ with tab_dash:
                 <span>{fmt(m['atual'])}</span><span>{fmt(m['total'])}</span>
               </div>
             </div>""", unsafe_allow_html=True)
-        if not metas: st.info("Nenhuma meta cadastrada.")
+        if not metas:
+            st.info("Nenhuma meta cadastrada.")
 
-        # IA Insight dinâmico
-        if saidas>0 and entradas>0:
-            pct_s = round(saidas/entradas*100)
-            maior = max(cats_saida,key=cats_saida.get) if cats_saida else ""
-            if pct_s>80:   insight=f"⚠️ Despesas em {pct_s}% da receita — risco orçamentário!"
-            elif pct_s>60: insight=f"📊 Despesas em {pct_s}% da receita. Controle aceitável."
-            else:          insight=f"✅ Excelente! Apenas {pct_s}% da receita em despesas."
-            if maior: insight+=f" Maior custo: <b>{maior}</b>."
-            # Alertas de orçamento
-            orc_map = {o["categoria"]:o["limite"] for o in orcs}
-            alertas = []
-            for cat,gasto in cats_saida.items():
-                if cat in orc_map and gasto > orc_map[cat]*0.8:
-                    pct_orc = round(gasto/orc_map[cat]*100)
-                    alertas.append(f"🔴 <b>{cat}</b>: {pct_orc}% do orçamento usado.")
-            if alertas:
-                insight += "<br>" + " ".join(alertas)
-        else:
-            insight="💡 Adicione lançamentos para ativar os insights financeiros."
-
+        # IA Insight dinâmico e rico
+        insight = gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist, mes_sel, ano_sel)
         st.markdown(f"""
         <div class="ai-box">
           <div class="ai-label">IA Financial Insight</div>
@@ -583,7 +614,7 @@ with tab_dash:
         </div>""", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Botão exportar Excel ──────────────────────────────────────────────────
+    # ── Exportar ──────────────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="panel"><div class="panel-title">📥 Exportar Relatório</div>', unsafe_allow_html=True)
     col_ex1, col_ex2, col_ex3 = st.columns(3)
@@ -599,7 +630,6 @@ with tab_dash:
             use_container_width=True,
         )
     with col_ex2:
-        # CSV rápido
         if todos_lanc:
             df_csv = pd.DataFrame(todos_lanc)[["data","nome","categoria","tipo","valor"]]
             csv_bytes = df_csv.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
@@ -628,45 +658,83 @@ with tab_lanc:
 
     with col_form:
         st.markdown('<div class="form-box"><div class="form-title">➕ Novo Lançamento</div>', unsafe_allow_html=True)
-        tipo  = st.selectbox("Tipo",["saida","entrada"],
-                    format_func=lambda x:"💸 Saída" if x=="saida" else "💰 Entrada",key="f_tipo")
-        nome  = st.text_input("Descrição",placeholder="Ex: Conta de luz",key="f_nome")
-        valor = st.number_input("Valor (R$)",min_value=0.01,step=0.01,format="%.2f",key="f_valor")
+        tipo  = st.selectbox("Tipo", ["saida","entrada"],
+                    format_func=lambda x:"💸 Saída" if x=="saida" else "💰 Entrada", key="f_tipo")
+        nome  = st.text_input("Descrição", placeholder="Ex: Conta de luz", key="f_nome")
+        valor = st.number_input("Valor (R$)", min_value=0.01, step=0.01, format="%.2f", key="f_valor")
         cats_op = [c for c in CATS if c!="Salário"] if tipo=="saida" else ["Salário","Outros"]
         c1,c2 = st.columns(2)
-        with c1: cat  = st.selectbox("Categoria",cats_op,key="f_cat")
-        with c2: icon = st.selectbox("Ícone",ICONES,key="f_icon")
-        data_l = st.date_input("Data",value=date.today(),key="f_data")
+        with c1: cat  = st.selectbox("Categoria", cats_op, key="f_cat")
+        with c2: icon = st.selectbox("Ícone", ICONES, key="f_icon")
+        data_l = st.date_input("Data", value=date.today(), key="f_data")
 
-        if st.button("✅ Adicionar lançamento",use_container_width=True,key="btn_add_tx"):
+        if st.button("✅ Adicionar lançamento", use_container_width=True, key="btn_add_tx"):
             if nome.strip():
-                db_add_lancamento(nome.strip(),cat,valor,tipo,icon,data_l)
+                db_add_lancamento(nome.strip(), cat, valor, tipo, icon, data_l)
                 st.success(f"✅ '{nome}' salvo!")
                 st.rerun()
             else:
                 st.error("Digite uma descrição.")
         st.markdown("</div>", unsafe_allow_html=True)
 
+        # ── Mini resumo rápido ─────────────────────────────────────────────
+        hoje2 = date.today()
+        txs_mes_atual = db_lancamentos(mes=hoje2.month, ano=hoje2.year)
+        ent_m = sum(t["valor"] for t in txs_mes_atual if t["tipo"]=="entrada")
+        sai_m = sum(t["valor"] for t in txs_mes_atual if t["tipo"]=="saida")
+        sal_m = ent_m - sai_m
+        cor_sal = "#4ade80" if sal_m >= 0 else "#f87171"
+        st.markdown(f"""
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-title">📊 Resumo — {MESES_BR[hoje2.month-1]}/{hoje2.year}</div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+            <span style="font-size:12px;color:rgba(255,255,255,0.5)">Entradas</span>
+            <span style="font-size:13px;font-weight:700;color:#4ade80">{fmt(ent_m)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+            <span style="font-size:12px;color:rgba(255,255,255,0.5)">Saídas</span>
+            <span style="font-size:13px;font-weight:700;color:#f87171">{fmt(sai_m)}</span>
+          </div>
+          <div class="divider"></div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:12px;color:rgba(255,255,255,0.5)">Saldo mês</span>
+            <span style="font-size:14px;font-weight:800;color:{cor_sal}">{fmt(sal_m)}</span>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
     with col_lista:
         st.markdown('<div class="panel"><div class="panel-title">📋 Todos os Lançamentos</div>', unsafe_allow_html=True)
 
         # Filtros
         fc1,fc2,fc3 = st.columns(3)
-        with fc1: filtro_tipo = st.selectbox("Tipo",["Todos","Entradas","Saídas"],key="filtro_tipo")
-        with fc2: filtro_cat  = st.selectbox("Categoria",["Todas"]+CATS,key="filtro_cat")
-        with fc3:
-            filtro_mes = st.selectbox("Mês",["Todos"]+MESES_BR,key="filtro_mes_lanc")
+        with fc1: filtro_tipo = st.selectbox("Tipo", ["Todos","Entradas","Saídas"], key="filtro_tipo")
+        with fc2: filtro_cat  = st.selectbox("Categoria", ["Todas"]+CATS, key="filtro_cat")
+        with fc3: filtro_mes  = st.selectbox("Mês", ["Todos"]+MESES_BR, key="filtro_mes_lanc")
+
+        # Busca textual
+        busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
 
         txs_all = db_lancamentos()
-        if filtro_tipo=="Entradas":  txs_all=[t for t in txs_all if t["tipo"]=="entrada"]
-        elif filtro_tipo=="Saídas":  txs_all=[t for t in txs_all if t["tipo"]=="saida"]
-        if filtro_cat!="Todas":      txs_all=[t for t in txs_all if t["categoria"]==filtro_cat]
-        if filtro_mes!="Todos":
+        if filtro_tipo == "Entradas":  txs_all = [t for t in txs_all if t["tipo"]=="entrada"]
+        elif filtro_tipo == "Saídas":  txs_all = [t for t in txs_all if t["tipo"]=="saida"]
+        if filtro_cat != "Todas":      txs_all = [t for t in txs_all if t["categoria"]==filtro_cat]
+        if filtro_mes != "Todos":
             mi = MESES_BR.index(filtro_mes)+1
-            txs_all=[t for t in txs_all if datetime.strptime(str(t["data"])[:10],"%Y-%m-%d").month==mi]
+            txs_all = [t for t in txs_all if datetime.strptime(str(t["data"])[:10],"%Y-%m-%d").month==mi]
+        if busca.strip():
+            txs_all = [t for t in txs_all if busca.lower() in t["nome"].lower()]
 
-        total_filtrado = sum(t["valor"] for t in txs_all)
-        st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">{len(txs_all)} lançamentos · Total: {fmt(total_filtrado)}</div>', unsafe_allow_html=True)
+        total_filtrado   = sum(t["valor"] for t in txs_all)
+        total_entradas_f = sum(t["valor"] for t in txs_all if t["tipo"]=="entrada")
+        total_saidas_f   = sum(t["valor"] for t in txs_all if t["tipo"]=="saida")
+
+        st.markdown(f"""
+        <div style="display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px;flex-wrap:wrap">
+          <span>{len(txs_all)} lançamentos</span>
+          <span style="color:#4ade80">▲ {fmt(total_entradas_f)}</span>
+          <span style="color:#f87171">▼ {fmt(total_saidas_f)}</span>
+          <span style="color:rgba(255,255,255,0.5)">Saldo: {fmt(total_entradas_f - total_saidas_f)}</span>
+        </div>""", unsafe_allow_html=True)
 
         if not txs_all:
             st.info("Nenhum lançamento encontrado.")
@@ -689,8 +757,9 @@ with tab_lanc:
                 </div>""", unsafe_allow_html=True)
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️",key=f"del_tx_{t['id']}"):
+                if st.button("🗑️", key=f"del_tx_{t['id']}"):
                     db_del_lancamento(t["id"])
+                    st.toast("🗑️ Lançamento removido.", icon="✅")
                     st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -702,21 +771,24 @@ with tab_invest:
     col_inv_f,col_inv_c = st.columns([1,1.5])
     with col_inv_f:
         st.markdown('<div class="form-box"><div class="form-title">➕ Novo Ativo</div>', unsafe_allow_html=True)
-        inv_nome = st.text_input("Nome do ativo",placeholder="Ex: Tesouro Selic 2029",key="inv_nome")
-        inv_val  = st.number_input("Valor (R$)",min_value=0.0,step=100.0,format="%.2f",key="inv_val")
-        inv_chg  = st.text_input("Variação",placeholder="Ex: +5.2%",key="inv_chg")
-        inv_cor  = st.selectbox("Cor",CORES,format_func=lambda c:COR_LABEL.get(c,c),key="inv_cor")
-        if st.button("✅ Adicionar ativo",use_container_width=True,key="btn_add_inv"):
+        inv_nome = st.text_input("Nome do ativo", placeholder="Ex: Tesouro Selic 2029", key="inv_nome")
+        inv_val  = st.number_input("Valor (R$)", min_value=0.0, step=100.0, format="%.2f", key="inv_val")
+        inv_chg  = st.text_input("Variação", placeholder="Ex: +5.2%", key="inv_chg")
+        inv_cor  = st.selectbox("Cor", CORES, format_func=lambda c:COR_LABEL.get(c,c), key="inv_cor")
+        if st.button("✅ Adicionar ativo", use_container_width=True, key="btn_add_inv"):
             if inv_nome.strip():
-                db_add_investimento(inv_nome.strip(),inv_val,inv_chg or "0%",inv_cor)
+                db_add_investimento(inv_nome.strip(), inv_val, inv_chg or "0%", inv_cor)
                 st.success(f"✅ '{inv_nome}' adicionado!")
                 st.rerun()
-            else: st.error("Digite o nome do ativo.")
+            else:
+                st.error("Digite o nome do ativo.")
         st.markdown("</div>", unsafe_allow_html=True)
 
         invs_list  = db_investimentos()
         total_port = sum(i["valor"] for i in invs_list)
         st.markdown('<div class="panel"><div class="panel-title">🏦 Seus Ativos</div>', unsafe_allow_html=True)
+        if invs_list:
+            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Total: {fmt(total_port)}</div>', unsafe_allow_html=True)
         for inv in invs_list:
             pct       = round(inv["valor"]/total_port*100) if total_port>0 else 0
             chg_color = "#4ade80" if str(inv["variacao"]).startswith("+") else "#f87171"
@@ -737,9 +809,10 @@ with tab_invest:
                 </div>""", unsafe_allow_html=True)
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️",key=f"del_inv_{inv['id']}"):
+                if st.button("🗑️", key=f"del_inv_{inv['id']}"):
                     db_del_investimento(inv["id"]); st.rerun()
-        if not invs_list: st.info("Nenhum ativo cadastrado.")
+        if not invs_list:
+            st.info("Nenhum ativo cadastrado.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_inv_c:
@@ -747,18 +820,38 @@ with tab_invest:
         invs2 = db_investimentos()
         if invs2:
             total_p2 = sum(i["valor"] for i in invs2)
+
+            # Gráfico de pizza
             fig_port = go.Figure(go.Pie(
-                labels=[i["nome"] for i in invs2],values=[i["valor"] for i in invs2],
-                hole=0.70,marker=dict(colors=[i["cor"] for i in invs2],
-                line=dict(color="rgba(2,4,10,0.5)",width=2)),
+                labels=[i["nome"] for i in invs2], values=[i["valor"] for i in invs2],
+                hole=0.70, marker=dict(colors=[i["cor"] for i in invs2],
+                line=dict(color="rgba(2,4,10,0.5)", width=2)),
                 textinfo="none",
                 hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f} (%{percent})<extra></extra>",
             ))
-            fig_port.update_layout(**plotly_cfg(),height=380,showlegend=True,
-                legend=dict(font=dict(color="rgba(255,255,255,0.65)",size=12),bgcolor="rgba(0,0,0,0)"),
-                annotations=[dict(text=f"<b>{fmt(total_p2)}</b>",x=0.38,y=0.5,
-                    font=dict(size=15,color="white",family="Space Grotesk"),showarrow=False)])
-            st.plotly_chart(fig_port,use_container_width=True,config={"displayModeBar":False})
+            fig_port.update_layout(**plotly_cfg(), height=280, showlegend=True,
+                legend=dict(font=dict(color="rgba(255,255,255,0.65)", size=12), bgcolor="rgba(0,0,0,0)"),
+                annotations=[dict(text=f"<b>{fmt(total_p2)}</b>", x=0.38, y=0.5,
+                    font=dict(size=15, color="white", family="Space Grotesk"), showarrow=False)])
+            st.plotly_chart(fig_port, use_container_width=True, config={"displayModeBar":False})
+
+            # Rentabilidade estimada
+            st.markdown('<div class="panel-title" style="margin-top:16px">📈 Rentabilidade por Ativo</div>', unsafe_allow_html=True)
+            for inv in invs2:
+                chg_str = str(inv["variacao"]).replace("%","").replace("+","").strip()
+                try:
+                    chg_val = float(chg_str)
+                    rendimento = inv["valor"] * chg_val / 100
+                    cor = "#4ade80" if chg_val >= 0 else "#f87171"
+                    sinal = "+" if chg_val >= 0 else ""
+                    st.markdown(f"""
+                    <div class="tx-row" style="margin-bottom:6px">
+                      <div style="width:8px;height:8px;border-radius:50%;background:{inv['cor']};flex-shrink:0"></div>
+                      <div style="flex:1;margin-left:10px;font-size:12px">{inv['nome']}</div>
+                      <div style="color:{cor};font-size:12px;font-weight:700">{sinal}{fmt(rendimento)}</div>
+                    </div>""", unsafe_allow_html=True)
+                except:
+                    pass
         else:
             st.info("Adicione ativos para ver o gráfico.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -771,23 +864,43 @@ with tab_metas:
     col_mf,col_ml = st.columns([1,1.5])
     with col_mf:
         st.markdown('<div class="form-box"><div class="form-title">➕ Nova Meta</div>', unsafe_allow_html=True)
-        meta_nome  = st.text_input("Nome da meta",placeholder="Ex: Fundo de emergência",key="meta_nome")
-        meta_atual = st.number_input("Valor atual (R$)",min_value=0.0,step=100.0,format="%.2f",key="meta_atual")
-        meta_total = st.number_input("Valor da meta (R$)",min_value=1.0,step=100.0,value=1000.0,format="%.2f",key="meta_total")
-        meta_cor   = st.selectbox("Cor",CORES,format_func=lambda c:COR_LABEL.get(c,c),key="meta_cor")
-        if st.button("✅ Adicionar meta",use_container_width=True,key="btn_add_meta"):
+        meta_nome  = st.text_input("Nome da meta", placeholder="Ex: Fundo de emergência", key="meta_nome")
+        meta_atual = st.number_input("Valor atual (R$)", min_value=0.0, step=100.0, format="%.2f", key="meta_atual")
+        meta_total = st.number_input("Valor da meta (R$)", min_value=1.0, step=100.0, value=1000.0, format="%.2f", key="meta_total")
+        meta_cor   = st.selectbox("Cor", CORES, format_func=lambda c:COR_LABEL.get(c,c), key="meta_cor")
+        meta_prazo = st.date_input("Prazo (opcional)", value=None, key="meta_prazo",
+                                   help="Defina um prazo para calcular quanto falta.")
+        if st.button("✅ Adicionar meta", use_container_width=True, key="btn_add_meta"):
             if meta_nome.strip():
-                db_add_meta(meta_nome.strip(),meta_atual,meta_total,meta_cor)
+                db_add_meta(meta_nome.strip(), meta_atual, meta_total, meta_cor, meta_prazo)
                 st.success(f"✅ Meta '{meta_nome}' criada!"); st.rerun()
-            else: st.error("Digite o nome da meta.")
+            else:
+                st.error("Digite o nome da meta.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_ml:
         st.markdown('<div class="panel"><div class="panel-title">🏆 Suas Metas</div>', unsafe_allow_html=True)
         metas_list = db_metas()
-        if not metas_list: st.info("Nenhuma meta cadastrada ainda.")
+        if not metas_list:
+            st.info("Nenhuma meta cadastrada ainda.")
         for m in metas_list:
-            pct = min(round(m["atual"]/m["total"]*100),100) if m["total"]>0 else 0
+            pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
+            falta = m["total"] - m["atual"]
+
+            # Prazo e projeção
+            prazo_html = ""
+            if m.get("prazo"):
+                try:
+                    prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    dias_rest = (prazo_dt - date.today()).days
+                    if dias_rest > 0 and falta > 0:
+                        aporte_diario = falta / dias_rest
+                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">📅 {dias_rest} dias restantes · Aporte diário necessário: {fmt(aporte_diario)}</div>'
+                    elif dias_rest <= 0:
+                        prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">⚠️ Prazo vencido</div>'
+                except:
+                    pass
+
             st.markdown(f"""
             <div style="margin-bottom:8px">
               <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px">
@@ -797,19 +910,22 @@ with tab_metas:
               <div class="goal-track">
                 <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}88)"></div>
               </div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:10px;margin-top:4px">
-                <span>Atual: {fmt(m['atual'])}</span><span>Meta: {fmt(m['total'])}</span>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
+                <span>Atual: {fmt(m['atual'])}</span>
+                <span style="color:rgba(255,255,255,0.45)">Falta: {fmt(max(falta,0))}</span>
+                <span>Meta: {fmt(m['total'])}</span>
               </div>
+              {prazo_html}
             </div>""", unsafe_allow_html=True)
             cu,cd = st.columns([4,1])
             with cu:
-                novo_a = st.number_input("",value=float(m["atual"]),min_value=0.0,
-                    step=100.0,format="%.2f",key=f"upd_{m['id']}",label_visibility="collapsed")
-                if st.button("💾 Atualizar",key=f"save_{m['id']}"):
-                    db_update_meta(m["id"],novo_a); st.rerun()
+                novo_a = st.number_input("", value=float(m["atual"]), min_value=0.0,
+                    step=100.0, format="%.2f", key=f"upd_{m['id']}", label_visibility="collapsed")
+                if st.button("💾 Atualizar", key=f"save_{m['id']}"):
+                    db_update_meta(m["id"], novo_a); st.rerun()
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️",key=f"delm_{m['id']}"):
+                if st.button("🗑️", key=f"delm_{m['id']}"):
                     db_del_meta(m["id"]); st.rerun()
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -828,18 +944,29 @@ with tab_orc:
     col_of, col_ol = st.columns([1,1.5])
     with col_of:
         st.markdown('<div class="form-box"><div class="form-title">💰 Definir Limite por Categoria</div>', unsafe_allow_html=True)
-        orc_cat    = st.selectbox("Categoria",[c for c in CATS if c!="Salário"],key="orc_cat")
-        orc_limite = st.number_input("Limite mensal (R$)",min_value=1.0,step=50.0,format="%.2f",key="orc_limite")
-        if st.button("💾 Salvar limite",use_container_width=True,key="btn_orc"):
-            db_upsert_orcamento(orc_cat,orc_limite)
+        orc_cat    = st.selectbox("Categoria", [c for c in CATS if c!="Salário"], key="orc_cat")
+        orc_limite = st.number_input("Limite mensal (R$)", min_value=1.0, step=50.0, format="%.2f", key="orc_limite")
+        if st.button("💾 Salvar limite", use_container_width=True, key="btn_orc"):
+            db_upsert_orcamento(orc_cat, orc_limite)
             st.success(f"✅ Limite de {fmt(orc_limite)}/mês para {orc_cat} salvo!"); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
+
+        # Resumo de orçamento
+        orcs_resumo = db_orcamentos()
+        if orcs_resumo:
+            total_orcado = sum(o["limite"] for o in orcs_resumo)
+            st.markdown(f"""
+            <div class="panel" style="margin-top:12px">
+              <div class="panel-title">📋 Resumo</div>
+              <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:4px">{len(orcs_resumo)} categorias orçadas</div>
+              <div style="font-size:14px;font-weight:700;color:#c4b5fd">Total orçado: {fmt(total_orcado)}/mês</div>
+            </div>""", unsafe_allow_html=True)
 
     with col_ol:
         st.markdown('<div class="panel"><div class="panel-title">📊 Orçamentos Configurados</div>', unsafe_allow_html=True)
         orcs_list = db_orcamentos()
         hoje2 = date.today()
-        txs_mes = db_lancamentos(mes=hoje2.month,ano=hoje2.year)
+        txs_mes = db_lancamentos(mes=hoje2.month, ano=hoje2.year)
         cats_gastos = {}
         for t in txs_mes:
             if t["tipo"]=="saida":
@@ -847,10 +974,15 @@ with tab_orc:
 
         if not orcs_list:
             st.info("Nenhum limite configurado ainda.")
-        for o in orcs_list:
+
+        # Ordenar por % utilizado (mais crítico primeiro)
+        orcs_sorted = sorted(orcs_list,
+                              key=lambda o: cats_gastos.get(o["categoria"],0)/o["limite"] if o["limite"]>0 else 0,
+                              reverse=True)
+        for o in orcs_sorted:
             gasto  = cats_gastos.get(o["categoria"],0)
             limite = o["limite"]
-            pct    = min(round(gasto/limite*100),100) if limite>0 else 0
+            pct    = min(round(gasto/limite*100), 100) if limite>0 else 0
             cor    = "#f87171" if pct>=80 else ("#fbbf24" if pct>=60 else "#4ade80")
             alerta = " ⚠️" if pct>=80 else ""
             ci,cd  = st.columns([6,1])
@@ -869,7 +1001,7 @@ with tab_orc:
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
-                if st.button("🗑️",key=f"del_orc_{o['id']}"):
+                if st.button("🗑️", key=f"del_orc_{o['id']}"):
                     db_del_orcamento(o["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -887,31 +1019,55 @@ with tab_rec:
     col_rf,col_rl = st.columns([1,1.5])
     with col_rf:
         st.markdown('<div class="form-box"><div class="form-title">🔄 Nova Despesa Recorrente</div>', unsafe_allow_html=True)
-        rec_nome = st.text_input("Descrição",placeholder="Ex: Aluguel",key="rec_nome")
-        rec_val  = st.number_input("Valor (R$)",min_value=0.01,step=0.01,format="%.2f",key="rec_val")
+        rec_nome = st.text_input("Descrição", placeholder="Ex: Aluguel", key="rec_nome")
+        rec_val  = st.number_input("Valor (R$)", min_value=0.01, step=0.01, format="%.2f", key="rec_val")
         rc1,rc2  = st.columns(2)
-        with rc1: rec_cat  = st.selectbox("Categoria",[c for c in CATS if c!="Salário"],key="rec_cat")
-        with rc2: rec_icon = st.selectbox("Ícone",ICONES,key="rec_icon")
-        rec_dia = st.number_input("Dia do mês",min_value=1,max_value=28,value=5,step=1,key="rec_dia")
+        with rc1: rec_cat  = st.selectbox("Categoria", [c for c in CATS if c!="Salário"], key="rec_cat")
+        with rc2: rec_icon = st.selectbox("Ícone", ICONES, key="rec_icon")
+        rec_dia = st.number_input("Dia do mês", min_value=1, max_value=28, value=5, step=1, key="rec_dia")
         st.caption("Use dia ≤ 28 para funcionar em todos os meses.")
-        if st.button("✅ Adicionar recorrente",use_container_width=True,key="btn_add_rec"):
+        if st.button("✅ Adicionar recorrente", use_container_width=True, key="btn_add_rec"):
             if rec_nome.strip():
-                db_add_recorrente(rec_nome.strip(),rec_cat,rec_val,rec_icon,int(rec_dia))
+                db_add_recorrente(rec_nome.strip(), rec_cat, rec_val, rec_icon, int(rec_dia))
                 st.success(f"✅ '{rec_nome}' adicionado! Será lançado todo dia {int(rec_dia)}."); st.rerun()
-            else: st.error("Digite uma descrição.")
+            else:
+                st.error("Digite uma descrição.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_rl:
         st.markdown('<div class="panel"><div class="panel-title">🔄 Despesas Recorrentes Ativas</div>', unsafe_allow_html=True)
         recs = db_recorrentes()
         total_rec = sum(r["valor"] for r in recs)
+        total_rec_anual = total_rec * 12
         if recs:
-            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">{len(recs)} recorrentes · {fmt(total_rec)}/mês</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="display:flex;gap:20px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:14px;flex-wrap:wrap">
+              <span>{len(recs)} recorrentes</span>
+              <span style="color:#c4b5fd">Mensal: {fmt(total_rec)}</span>
+              <span style="color:rgba(196,181,253,0.5)">Anual: {fmt(total_rec_anual)}</span>
+            </div>""", unsafe_allow_html=True)
         else:
             st.info("Nenhuma despesa recorrente cadastrada.")
         for r in recs:
             ri,rd = st.columns([6,1])
             with ri:
+                # Próximo vencimento
+                hoje3 = date.today()
+                dia_rec = min(r["dia_do_mes"], 28)
+                try:
+                    prox = date(hoje3.year, hoje3.month, dia_rec)
+                    if prox < hoje3:
+                        if hoje3.month == 12:
+                            prox = date(hoje3.year+1, 1, dia_rec)
+                        else:
+                            prox = date(hoje3.year, hoje3.month+1, dia_rec)
+                    dias_prox = (prox - hoje3).days
+                    venc_txt = "Hoje!" if dias_prox == 0 else f"em {dias_prox}d"
+                    venc_cor = "#f87171" if dias_prox <= 3 else "rgba(255,255,255,0.3)"
+                except:
+                    venc_txt = f"dia {r['dia_do_mes']}"
+                    venc_cor = "rgba(255,255,255,0.3)"
+
                 st.markdown(f"""
                 <div class="tx-row" style="border-left:3px solid #7c3aed44">
                   <div style="font-size:20px;width:36px;text-align:center;flex-shrink:0">{r['icone']}</div>
@@ -919,12 +1075,13 @@ with tab_rec:
                     <div style="font-size:13px;font-weight:600">{r['nome']}</div>
                     <div style="font-size:10px;color:rgba(255,255,255,0.38);margin-top:3px">
                       {r['categoria']} · todo dia <b style="color:#c4b5fd">{r['dia_do_mes']}</b>
+                      · <span style="color:{venc_cor}">próximo {venc_txt}</span>
                     </div>
                   </div>
                   <div class="tx-neg">-{fmt(r['valor'])}</div>
                 </div>""", unsafe_allow_html=True)
             with rd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️",key=f"del_rec_{r['id']}"):
+                if st.button("🗑️", key=f"del_rec_{r['id']}"):
                     db_del_recorrente(r["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
