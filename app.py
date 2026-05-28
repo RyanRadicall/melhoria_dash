@@ -10,7 +10,7 @@ from styles.main_css import apply_styles
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Finance PRO X",
+    page_title="Finance PRO",
     page_icon="💜",
     layout="wide",
     initial_sidebar_state="collapsed",
