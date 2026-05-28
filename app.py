@@ -258,7 +258,7 @@ def tela_login():
                   background:linear-gradient(135deg,#fff 20%,#a78bfa 55%,#60a5fa 90%);
                   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
                   filter:drop-shadow(0 0 30px rgba(124,58,237,0.5));margin-bottom:12px">
-        Finance PRO X
+        Finance PRO
       </div>
       <div style="font-size:15px;color:rgba(255,255,255,0.4);letter-spacing:.5px">
         Plataforma de inteligência financeira de nível institucional
