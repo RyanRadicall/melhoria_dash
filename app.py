@@ -253,78 +253,182 @@ def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_login():
     st.markdown("""
-    <div style="text-align:center;margin-top:52px;margin-bottom:44px;position:relative;z-index:10">
-      <div style="font-size:46px;font-weight:900;letter-spacing:-2px;line-height:1;
-                  background:linear-gradient(135deg,#fff 20%,#a78bfa 55%,#60a5fa 90%);
-                  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-                  filter:drop-shadow(0 0 30px rgba(124,58,237,0.5));margin-bottom:12px">
+    <div style="
+        text-align:center;
+        margin-top:52px;
+        margin-bottom:44px;
+        position:relative;
+        z-index:10
+    ">
+      <div style="
+            font-size:46px;
+            font-weight:900;
+            letter-spacing:-2px;
+            line-height:1;
+            background:linear-gradient(135deg,#fff 20%,#a78bfa 55%,#60a5fa 90%);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            background-clip:text;
+            filter:drop-shadow(0 0 30px rgba(124,58,237,0.5));
+            margin-bottom:12px
+      ">
         Finance PRO
       </div>
-      <div style="font-size:15px;color:rgba(255,255,255,0.4);letter-spacing:.5px">
+
+      <div style="
+            font-size:15px;
+            color:rgba(255,255,255,0.45);
+            letter-spacing:.5px
+      ">
         Plataforma de inteligência financeira de nível institucional
       </div>
     </div>
     """, unsafe_allow_html=True)
 
     _, col, _ = st.columns([1,1.1,1])
+
     with col:
-        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True,
-                       label_visibility="collapsed", key="auth_aba")
-        st.markdown("<br>", unsafe_allow_html=True)
-        email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
-        senha = st.text_input("Senha", type="password", placeholder="••••••••", key="auth_senha")
+
+        st.markdown("""
+        <div class="login-wrap">
+
+            <div class="hero-glow-card">
+                <div class="hero-badge">
+                    ✨ IA Financeira Ativa
+                </div>
+
+                <div class="hero-title">
+                    Controle total das suas finanças
+                </div>
+
+                <div class="hero-subtitle">
+                    Insights inteligentes, análises avançadas e gestão financeira premium.
+                </div>
+            </div>
+
+            <div style="height:28px"></div>
+        """, unsafe_allow_html=True)
+
+        aba = st.radio(
+            "",
+            ["Entrar", "Criar conta"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="auth_aba"
+        )
+
+        st.markdown('<div style="height:22px"></div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="auth-inputs">', unsafe_allow_html=True)
+
+        email = st.text_input(
+            "📧 E-mail",
+            placeholder="seuemail@exemplo.com",
+            key="auth_email"
+        )
+
+        senha = st.text_input(
+            "🔒 Senha",
+            type="password",
+            placeholder="••••••••",
+            key="auth_senha"
+        )
+
         nome = ""
+
         if aba == "Criar conta":
-            nome = st.text_input("Nome de exibição", placeholder="Ex: Ryan", key="auth_nome")
+            nome = st.text_input(
+                "👤 Nome de exibição",
+                placeholder="Ex: Ryan",
+                key="auth_nome"
+            )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
         st.markdown("<br>", unsafe_allow_html=True)
 
         if aba == "Entrar":
-            if st.button("🔐 Entrar na plataforma", use_container_width=True, key="btn_login"):
+
+            if st.button(
+                "🔐 Entrar na plataforma",
+                use_container_width=True,
+                key="btn_login"
+            ):
+
                 if not email.strip() or not senha:
                     st.error("Preencha e-mail e senha.")
+
                 else:
                     try:
-                        res = supabase.auth.sign_in_with_password({"email": email.strip(), "password": senha})
+                        res = supabase.auth.sign_in_with_password({
+                            "email": email.strip(),
+                            "password": senha
+                        })
+
                         st.session_state.update({
                             "user_id": res.user.id,
                             "user_email": res.user.email,
                             "display_name": res.user.user_metadata.get("display_name", ""),
                             "logado": True
                         })
+
                         st.rerun()
+
                     except Exception as e:
                         err = str(e).lower()
+
                         if "invalid" in err or "credentials" in err:
                             st.error("❌ E-mail ou senha incorretos.")
+
                         elif "email not confirmed" in err:
                             st.error("📧 Confirme seu e-mail.")
+
                         else:
                             st.error(f"Erro: {e}")
+
         else:
-            if st.button("✨ Criar minha conta", use_container_width=True, key="btn_signup"):
+
+            if st.button(
+                "✨ Criar minha conta",
+                use_container_width=True,
+                key="btn_signup"
+            ):
+
                 if not nome.strip():
                     st.error("Digite seu nome.")
+
                 elif not email.strip():
                     st.error("Digite seu e-mail.")
+
                 elif len(senha) < 6:
                     st.error("Senha precisa ter pelo menos 6 caracteres.")
+
                 else:
                     try:
                         res = supabase.auth.sign_up({
-                            "email": email.strip(), "password": senha,
-                            "options": {"data": {"display_name": nome}}
+                            "email": email.strip(),
+                            "password": senha,
+                            "options": {
+                                "data": {
+                                    "display_name": nome
+                                }
+                            }
                         })
+
                         if res.user:
                             st.success("✅ Conta criada! Clique em Entrar.")
                         else:
                             st.warning("Verifique seu e-mail para confirmar.")
+
                     except Exception as e:
                         err = str(e).lower()
+
                         if "already" in err:
                             st.error("E-mail já cadastrado. Use Entrar.")
+
                         else:
                             st.error(f"Erro: {e}")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
