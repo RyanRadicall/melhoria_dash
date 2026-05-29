@@ -39,7 +39,7 @@ def primeiro_nome():
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
     return "Usuário"
 
-# ── Cache helpers (TTL de 60s para evitar excesso de queries) ─────────────────
+# ── Cache helpers ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def cached_lancamentos_historico(_uid):
     return supabase.table("lancamentos").select("data,valor,tipo,categoria").eq("user_id",_uid).execute().data or []
@@ -52,9 +52,31 @@ def cached_lancamentos(_uid, mes=None, ano=None):
         q = q.gte("data", f"{ano}-{mes:02d}-01").lte("data", f"{ano}-{mes:02d}-{ultimo_dia:02d}")
     return q.order("data", desc=True).execute().data or []
 
+@st.cache_data(ttl=120)
+def cached_investimentos(_uid):
+    return supabase.table("investimentos").select("*").eq("user_id",_uid).execute().data or []
+
+@st.cache_data(ttl=120)
+def cached_metas(_uid):
+    return supabase.table("metas").select("*").eq("user_id",_uid).execute().data or []
+
+@st.cache_data(ttl=120)
+def cached_orcamentos(_uid):
+    return supabase.table("orcamentos").select("*").eq("user_id",_uid).execute().data or []
+
+@st.cache_data(ttl=120)
+def cached_recorrentes(_uid):
+    return supabase.table("recorrentes").select("*").eq("user_id",_uid).execute().data or []
+
 def invalidar_cache():
     cached_lancamentos.clear()
     cached_lancamentos_historico.clear()
+
+def invalidar_cache_secundario():
+    cached_investimentos.clear()
+    cached_metas.clear()
+    cached_orcamentos.clear()
+    cached_recorrentes.clear()
 
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
 def db_lancamentos(mes=None, ano=None):
@@ -77,35 +99,40 @@ def db_lancamentos_historico():
 
 # ── DB: Investimentos ─────────────────────────────────────────────────────────
 def db_investimentos():
-    return supabase.table("investimentos").select("*").eq("user_id",uid()).execute().data or []
+    return cached_investimentos(uid())
 
 def db_add_investimento(nome, val, chg, cor):
     supabase.table("investimentos").insert({
         "user_id":uid(),"nome":nome,"valor":val,"variacao":chg,"cor":cor
     }).execute()
+    invalidar_cache_secundario()
 
 def db_del_investimento(rid):
     supabase.table("investimentos").delete().eq("id",rid).execute()
+    invalidar_cache_secundario()
 
 # ── DB: Metas ─────────────────────────────────────────────────────────────────
 def db_metas():
-    return supabase.table("metas").select("*").eq("user_id",uid()).execute().data or []
+    return cached_metas(uid())
 
 def db_add_meta(nome, atual, total, cor, prazo=None):
     payload = {"user_id":uid(),"nome":nome,"atual":atual,"total":total,"cor":cor}
     if prazo:
         payload["prazo"] = str(prazo)
     supabase.table("metas").insert(payload).execute()
+    invalidar_cache_secundario()
 
 def db_update_meta(rid, atual):
     supabase.table("metas").update({"atual":atual}).eq("id",rid).execute()
+    invalidar_cache_secundario()
 
 def db_del_meta(rid):
     supabase.table("metas").delete().eq("id",rid).execute()
+    invalidar_cache_secundario()
 
 # ── DB: Orçamento ─────────────────────────────────────────────────────────────
 def db_orcamentos():
-    return supabase.table("orcamentos").select("*").eq("user_id",uid()).execute().data or []
+    return cached_orcamentos(uid())
 
 def db_upsert_orcamento(cat, limite):
     existing = supabase.table("orcamentos").select("id").eq("user_id",uid()).eq("categoria",cat).execute().data
@@ -113,22 +140,26 @@ def db_upsert_orcamento(cat, limite):
         supabase.table("orcamentos").update({"limite":limite}).eq("id",existing[0]["id"]).execute()
     else:
         supabase.table("orcamentos").insert({"user_id":uid(),"categoria":cat,"limite":limite}).execute()
+    invalidar_cache_secundario()
 
 def db_del_orcamento(rid):
     supabase.table("orcamentos").delete().eq("id",rid).execute()
+    invalidar_cache_secundario()
 
 # ── DB: Recorrentes ───────────────────────────────────────────────────────────
 def db_recorrentes():
-    return supabase.table("recorrentes").select("*").eq("user_id",uid()).execute().data or []
+    return cached_recorrentes(uid())
 
 def db_add_recorrente(nome, cat, val, icone, dia):
     supabase.table("recorrentes").insert({
         "user_id":uid(),"nome":nome,"categoria":cat,
         "valor":val,"icone":icone,"dia_do_mes":dia,
     }).execute()
+    invalidar_cache_secundario()
 
 def db_del_recorrente(rid):
     supabase.table("recorrentes").delete().eq("id",rid).execute()
+    invalidar_cache_secundario()
 
 def processar_recorrentes():
     hoje = date.today()
