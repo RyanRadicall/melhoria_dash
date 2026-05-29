@@ -7,8 +7,8 @@ from supabase import create_client, Client
 from market import get_cotacoes
 from export import gerar_excel
 from styles.main_css import apply_styles
-from constants import ICONES, CATS, CORES, CORES_MAP, COR_LABEL
-from formatters import fmt, fmt_compact, plotly_cfg, MESES_BR
+from utils.constants import ICONES, CATS, CORES, CORES_MAP, COR_LABEL
+from utils.formatters import fmt, fmt_compact, plotly_cfg, MESES_BR
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
