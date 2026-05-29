@@ -437,7 +437,12 @@ with tab_dash:
     entradas   = sum(t["valor"] for t in txs if t["tipo"]=="entrada")
     saidas     = sum(t["valor"] for t in txs if t["tipo"]=="saida")
     saldo      = entradas - saidas
-    invest     = sum(i["valor"] for i in invs)
+
+    # Considera apenas investimentos cadastrados até o último dia do período selecionado
+    ultimo_dia_sel = calendar.monthrange(ano_sel, mes_sel)[1]
+    corte = f"{ano_sel}-{mes_sel:02d}-{ultimo_dia_sel:02d}"
+    invs_periodo = [i for i in invs if str(i.get("criado_em", ""))[:10] <= corte]
+    invest     = sum(i["valor"] for i in invs_periodo)
     patrimonio = saldo + invest
 
     # Taxa de poupança
