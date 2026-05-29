@@ -7,6 +7,8 @@ from supabase import create_client, Client
 from market import get_cotacoes
 from export import gerar_excel
 from styles.main_css import apply_styles
+from constants import ICONES, CATS, CORES, CORES_MAP, COR_LABEL
+from formatters import fmt, fmt_compact, plotly_cfg, MESES_BR
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -24,36 +26,6 @@ def get_supabase() -> Client:
 
 supabase = get_supabase()
 
-# ── Constantes ────────────────────────────────────────────────────────────────
-ICONES = ["💼","🏠","🛒","🚗","📺","💊","🎓","✈️","💡","🍕","🎮","👗","🏋️","📱","🎵","🏦","💳","🎯","🐶","💈"]
-CATS   = ["Moradia","Alimentação","Transporte","Saúde","Lazer","Educação","Viagem","Salário","Outros"]
-CORES  = ["#7c3aed","#2563eb","#16a34a","#ca8a04","#dc2626","#0891b2","#db2777","#ea580c","#65a30d"]
-CORES_MAP = dict(zip(CATS, CORES))
-COR_LABEL = {
-    "#7c3aed":"🟣 Roxo","#2563eb":"🔵 Azul","#16a34a":"🟢 Verde",
-    "#ca8a04":"🟡 Âmbar","#dc2626":"🔴 Vermelho","#0891b2":"🩵 Ciano",
-    "#db2777":"🩷 Rosa","#ea580c":"🟠 Laranja","#65a30d":"🍏 Lima",
-}
-MESES_BR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def fmt(v):
-    return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
-
-def fmt_compact(v):
-    """Formata valor de forma compacta para KPIs grandes"""
-    if v >= 1_000_000:
-        return f"R$ {v/1_000_000:.1f}M"
-    elif v >= 1_000:
-        return f"R$ {v/1_000:.1f}K"
-    return f"R$ {v:,.0f}".replace(",",".")
-
-def plotly_cfg():
-    return dict(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Space Grotesk", color="rgba(255,255,255,0.65)", size=11),
-        margin=dict(l=10,r=10,t=10,b=10),
-    )
 
 def uid():
     return st.session_state.get("user_id","")
