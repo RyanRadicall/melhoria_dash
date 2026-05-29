@@ -113,6 +113,13 @@ def db_del_lancamento(rid):
     supabase.table("lancamentos").delete().eq("id",rid).execute()
     invalidar_cache()
 
+def db_update_lancamento(rid, nome, cat, val, tipo, icone, dt):
+    supabase.table("lancamentos").update({
+        "nome":nome,"categoria":cat,"valor":val,
+        "tipo":tipo,"icone":icone,"data":str(dt),
+    }).eq("id",rid).execute()
+    invalidar_cache()
+
 def db_lancamentos_historico():
     return cached_lancamentos_historico(uid())
 
@@ -780,7 +787,9 @@ with tab_lanc:
             cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
             borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
             rec_badge = ' 🔄' if t.get("recorrente") else ""
-            ci,cd = st.columns([6,1])
+            edit_key = f"_edit_{t['id']}"
+
+            ci, ce, cd = st.columns([6, 1, 1])
             with ci:
                 st.markdown(f"""
                 <div class="tx-row" style="border-left:3px solid {borda}">
@@ -791,12 +800,53 @@ with tab_lanc:
                   </div>
                   <div class="{cls}">{sinal}{fmt(t['valor'])}</div>
                 </div>""", unsafe_allow_html=True)
+            with ce:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("✏️", key=f"edit_btn_{t['id']}", help="Editar"):
+                    st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                    st.rerun()
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if confirm_delete(f"tx_{t['id']}"):
                     db_del_lancamento(t["id"])
                     st.toast("Lançamento removido.", icon="✅")
                     st.rerun()
+
+            # Formulário inline de edição
+            if st.session_state.get(edit_key):
+                with st.container():
+                    st.markdown('<div class="form-box" style="margin:4px 0 12px 0;padding:12px">', unsafe_allow_html=True)
+                    ea, eb = st.columns(2)
+                    with ea:
+                        e_tipo = st.selectbox("Tipo", ["saida","entrada"],
+                            index=0 if t["tipo"]=="saida" else 1,
+                            format_func=lambda x:"💸 Saída" if x=="saida" else "💰 Entrada",
+                            key=f"e_tipo_{t['id']}")
+                        e_nome = st.text_input("Descrição", value=t["nome"], key=f"e_nome_{t['id']}")
+                        e_val  = st.number_input("Valor (R$)", value=float(t["valor"]),
+                            min_value=0.01, step=0.01, format="%.2f", key=f"e_val_{t['id']}")
+                    with eb:
+                        cats_op = [c for c in CATS if c!="Salário"] if e_tipo=="saida" else ["Salário","Outros"]
+                        cat_idx = cats_op.index(t["categoria"]) if t["categoria"] in cats_op else 0
+                        e_cat  = st.selectbox("Categoria", cats_op, index=cat_idx, key=f"e_cat_{t['id']}")
+                        e_icon = st.selectbox("Ícone", ICONES,
+                            index=ICONES.index(t["icone"]) if t["icone"] in ICONES else 0,
+                            key=f"e_icon_{t['id']}")
+                        e_data = st.date_input("Data",
+                            value=datetime.strptime(str(t["data"])[:10], "%Y-%m-%d").date(),
+                            key=f"e_data_{t['id']}")
+                    s1, s2 = st.columns(2)
+                    with s1:
+                        if st.button("💾 Salvar", key=f"e_save_{t['id']}", use_container_width=True):
+                            db_update_lancamento(t["id"], e_nome.strip(), e_cat, e_val, e_tipo, e_icon, e_data)
+                            st.session_state.pop(edit_key, None)
+                            st.toast("Lançamento atualizado.", icon="✅")
+                            st.rerun()
+                    with s2:
+                        if st.button("✖ Cancelar", key=f"e_cancel_{t['id']}", use_container_width=True):
+                            st.session_state.pop(edit_key, None)
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
