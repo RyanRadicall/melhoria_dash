@@ -424,6 +424,10 @@ with tab_dash:
     with col_f2:
         ano_sel = st.selectbox("Ano", list(range(hoje.year-3, hoje.year+1)), index=3, key="dash_ano")
 
+    # Sincroniza contexto de mês/ano para outras abas
+    st.session_state["ctx_mes"] = mes_sel
+    st.session_state["ctx_ano"] = ano_sel
+
     txs   = db_lancamentos(mes=mes_sel, ano=ano_sel)
     invs  = db_investimentos()
     metas = db_metas()
@@ -731,7 +735,12 @@ with tab_lanc:
         fc1,fc2,fc3 = st.columns(3)
         with fc1: filtro_tipo = st.selectbox("Tipo", ["Todos","Entradas","Saídas"], key="filtro_tipo")
         with fc2: filtro_cat  = st.selectbox("Categoria", ["Todas"]+CATS, key="filtro_cat")
-        with fc3: filtro_mes  = st.selectbox("Mês", ["Todos"]+MESES_BR, key="filtro_mes_lanc")
+        with fc3:
+            ctx_mes = st.session_state.get("ctx_mes")
+            default_mes = MESES_BR[ctx_mes - 1] if ctx_mes else "Todos"
+            filtro_mes = st.selectbox("Mês", ["Todos"]+MESES_BR,
+                                      index=(["Todos"]+MESES_BR).index(default_mes),
+                                      key="filtro_mes_lanc")
 
         # Busca textual
         busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
