@@ -192,15 +192,16 @@ def processar_recorrentes():
     recorrentes = db_recorrentes()
     if not recorrentes:
         return 0
-    lanc_mes = supabase.table("lancamentos").select("nome,recorrente,data")\
+    lanc_mes = supabase.table("lancamentos").select("nome,categoria,data")\
         .eq("user_id",uid()).eq("recorrente",True)\
         .gte("data",f"{hoje.year}-{hoje.month:02d}-01")\
-        .lte("data",f"{hoje.year}-{hoje.month:02d}-31")\
+        .lte("data",f"{hoje.year}-{hoje.month:02d}-28")\
         .execute().data or []
-    nomes_ja_inseridos = {l["nome"] for l in lanc_mes}
+    # Chave composta: nome + categoria + dia do mês (evita falsos positivos)
+    ja_inseridos = {(l["nome"], l["categoria"]) for l in lanc_mes}
     inseridos = 0
     for r in recorrentes:
-        if r["nome"] not in nomes_ja_inseridos:
+        if (r["nome"], r["categoria"]) not in ja_inseridos:
             dia = min(r["dia_do_mes"], 28)
             dt_lanc = date(hoje.year, hoje.month, dia)
             db_add_lancamento(r["nome"], r["categoria"], r["valor"], "saida", r["icone"], dt_lanc, recorrente=True)
