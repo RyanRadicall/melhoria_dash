@@ -39,6 +39,25 @@ def primeiro_nome():
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
     return "Usuário"
 
+def confirm_delete(key: str) -> bool:
+    """Botão de exclusão em dois cliques. Primeiro clique pede confirmação, segundo executa."""
+    pending_key = f"_confirm_del_{key}"
+    if st.session_state.get(pending_key):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅", key=f"yes_{key}", help="Confirmar", use_container_width=True):
+                st.session_state.pop(pending_key, None)
+                return True
+        with c2:
+            if st.button("❌", key=f"no_{key}", help="Cancelar", use_container_width=True):
+                st.session_state.pop(pending_key, None)
+                st.rerun()
+        return False
+    if st.button("🗑️", key=f"del_{key}"):
+        st.session_state[pending_key] = True
+        st.rerun()
+    return False
+
 # ── Cache helpers ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def cached_lancamentos_historico(_uid):
@@ -760,9 +779,9 @@ with tab_lanc:
                 </div>""", unsafe_allow_html=True)
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_tx_{t['id']}"):
+                if confirm_delete(f"tx_{t['id']}"):
                     db_del_lancamento(t["id"])
-                    st.toast("🗑️ Lançamento removido.", icon="✅")
+                    st.toast("Lançamento removido.", icon="✅")
                     st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -812,7 +831,7 @@ with tab_invest:
                 </div>""", unsafe_allow_html=True)
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_inv_{inv['id']}"):
+                if confirm_delete(f"inv_{inv['id']}"):
                     db_del_investimento(inv["id"]); st.rerun()
         if not invs_list:
             st.info("Nenhum ativo cadastrado.")
@@ -928,7 +947,7 @@ with tab_metas:
                     db_update_meta(m["id"], novo_a); st.rerun()
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️", key=f"delm_{m['id']}"):
+                if confirm_delete(f"meta_{m['id']}"):
                     db_del_meta(m["id"]); st.rerun()
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1004,7 +1023,7 @@ with tab_orc:
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
-                if st.button("🗑️", key=f"del_orc_{o['id']}"):
+                if confirm_delete(f"orc_{o['id']}"):
                     db_del_orcamento(o["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1085,6 +1104,6 @@ with tab_rec:
                 </div>""", unsafe_allow_html=True)
             with rd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_rec_{r['id']}"):
+                if confirm_delete(f"rec_{r['id']}"):
                     db_del_recorrente(r["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
