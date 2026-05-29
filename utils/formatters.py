@@ -1,6 +1,18 @@
+MESES_BR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+
+
 def fmt(v: float) -> str:
     """Formata um número float para o padrão monetário brasileiro. Ex: 1234.56 → R$ 1.234,56"""
     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def fmt_compact(v: float) -> str:
+    """Formata valor de forma compacta para KPIs grandes. Ex: 1500 → R$ 1.5K"""
+    if v >= 1_000_000:
+        return f"R$ {v/1_000_000:.1f}M"
+    elif v >= 1_000:
+        return f"R$ {v/1_000:.1f}K"
+    return f"R$ {v:,.0f}".replace(",", ".")
 
 
 def plotly_cfg() -> dict:
