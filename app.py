@@ -482,6 +482,43 @@ with tab_dash:
             </div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+
+    # ── Projeção do mês atual ─────────────────────────────────────────────────
+    if mes_sel == hoje.month and ano_sel == hoje.year and hoje.day > 1:
+        dias_passados   = hoje.day - 1
+        dias_no_mes     = calendar.monthrange(hoje.year, hoje.month)[1]
+        dias_restantes  = dias_no_mes - hoje.day + 1
+        media_diaria    = saidas / dias_passados if dias_passados > 0 else 0
+        proj_saidas     = saidas + (media_diaria * dias_restantes)
+        proj_saldo      = entradas - proj_saidas
+        no_azul         = proj_saldo >= 0
+        cor_proj        = "#16a34a" if no_azul else "#dc2626"
+        icone_proj      = "✅" if no_azul else "⚠️"
+        label_proj      = "No azul até o fim do mês" if no_azul else "Atenção: projeção negativa"
+
+        st.markdown(f"""
+        <div class="panel" style="border-left:3px solid {cor_proj};margin-bottom:8px">
+          <div class="panel-title">📈 Projeção — Fim de {MESES_BR[mes_sel-1]}/{ano_sel}</div>
+          <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:center;padding:4px 0">
+            <div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">GASTO MÉDIO/DIA</div>
+              <div style="font-size:18px;font-weight:700;color:#e2e8f0">{fmt(media_diaria)}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">PROJEÇÃO DE GASTOS</div>
+              <div style="font-size:18px;font-weight:700;color:#f87171">{fmt(proj_saidas)}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">SALDO PROJETADO</div>
+              <div style="font-size:18px;font-weight:700;color:{cor_proj}">{fmt(proj_saldo)}</div>
+            </div>
+            <div style="margin-left:auto;text-align:right">
+              <div style="font-size:13px;font-weight:600;color:{cor_proj}">{icone_proj} {label_proj}</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.38);margin-top:4px">{dias_passados} dias computados · {dias_restantes} restantes</div>
+            </div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
     # ── Gráfico Histórico ─────────────────────────────────────────────────────
     st.markdown('<div class="panel"><div class="panel-title">📅 Histórico Mensal — Entradas vs Saídas</div>', unsafe_allow_html=True)
     if hist:
