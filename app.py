@@ -655,12 +655,14 @@ with tab_dash:
             fill="tozeroy", fillcolor="rgba(167,139,250,0.08)",
             hovertemplate="<b>%{x}</b><br>Acumulado: R$ %{y:,.2f}<extra></extra>",
         ))
-        fig_acum.update_layout(**plotly_cfg(), height=140,
+        cfg_acum = plotly_cfg()
+        cfg_acum.update(dict(
+            height=140, showlegend=False, margin=dict(l=10,r=10,t=4,b=10),
             yaxis=dict(gridcolor="rgba(255,255,255,0.05)", tickfont=dict(size=9, color="rgba(255,255,255,0.3)"),
                        zeroline=True, zerolinecolor="rgba(255,255,255,0.15)", zerolinewidth=1),
             xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=10, color="rgba(255,255,255,0.35)")),
-            showlegend=False, margin=dict(l=10,r=10,t=4,b=10),
-        )
+        ))
+        fig_acum.update_layout(**cfg_acum)
         st.markdown('<div style="font-size:11px;color:rgba(255,255,255,0.35);margin:8px 0 2px 0">📈 Saldo acumulado</div>', unsafe_allow_html=True)
         st.plotly_chart(fig_acum, use_container_width=True, config={"displayModeBar":False})
     else:
