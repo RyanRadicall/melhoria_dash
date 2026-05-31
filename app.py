@@ -3,7 +3,8 @@ import plotly.graph_objects as go
 import pandas as pd
 import calendar
 from datetime import date, datetime, timedelta
-from supabase import create_client, Client
+from supabase import Client
+from services.supabase_client import supabase
 from market import get_cotacoes
 from export import gerar_excel
 from styles.main_css import apply_styles
@@ -19,12 +20,7 @@ st.set_page_config(
 )
 apply_styles()
 
-# ── Supabase ──────────────────────────────────────────────────────────────────
-@st.cache_resource
-def get_supabase() -> Client:
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
-
-supabase = get_supabase()
+# ── Supabase via services/supabase_client.py ─────────────────────────────────
 
 
 def uid():
@@ -383,14 +379,30 @@ if not st.session_state["logado"]:
     tela_login()
     st.stop()
 
-# ── Processar recorrentes (1x por sessão) ─────────────────────────────────────
+# ── Processar recorrentes + boas-vindas (1x por sessão) ──────────────────────
 if "recorrentes_processados" not in st.session_state:
     try:
         n = processar_recorrentes()
-        if n > 0:
-            st.toast(f"✅ {n} lançamento(s) recorrente(s) inserido(s) automaticamente!", icon="🔄")
     except Exception:
-        pass
+        n = 0
+
+    # Resumo rápido para o toast de boas-vindas
+    try:
+        hoje_bv   = date.today()
+        txs_bv    = db_lancamentos(mes=hoje_bv.month, ano=hoje_bv.year)
+        saldo_bv  = sum(t["valor"] if t["tipo"]=="entrada" else -t["valor"] for t in txs_bv)
+        metas_bv  = db_metas()
+        n_metas   = len(metas_bv)
+        cor_saldo = "🟢" if saldo_bv >= 0 else "🔴"
+        resumo    = f"{cor_saldo} Saldo do mês: {fmt(saldo_bv)}"
+        if n_metas > 0:
+            resumo += f" · 🎯 {n_metas} meta{'s' if n_metas > 1 else ''} ativa{'s' if n_metas > 1 else ''}"
+        if n > 0:
+            resumo += f" · 🔄 {n} recorrente{'s' if n > 1 else ''} lançado{'s' if n > 1 else ''}"
+        st.toast(f"Olá, {primeiro_nome()}! {resumo}", icon="👋")
+    except Exception:
+        st.toast(f"Bem-vindo(a) de volta, {primeiro_nome()}! 👋")
+
     st.session_state["recorrentes_processados"] = True
 
 # ── Header ────────────────────────────────────────────────────────────────────
