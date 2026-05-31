@@ -121,12 +121,16 @@ def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
         st.session_state["logado"] = False
         st.rerun()
         return
-    supabase.table("lancamentos").insert({
-        "user_id": user, "nome": nome, "categoria": cat,
-        "valor": float(val), "tipo": tipo, "icone": icone,
-        "data": str(dt), "recorrente": recorrente,
-    }).execute()
-    invalidar_cache()
+    try:
+        supabase.table("lancamentos").insert({
+            "user_id": user, "nome": nome, "categoria": cat,
+            "valor": float(val), "tipo": tipo, "icone": icone,
+            "data": str(dt), "recorrente": recorrente,
+        }).execute()
+        invalidar_cache()
+    except Exception as e:
+        st.error(f"Erro ao salvar: {e}")
+        raise
 
 def db_del_lancamento(rid):
     supabase.table("lancamentos").delete().eq("id",rid).execute()
