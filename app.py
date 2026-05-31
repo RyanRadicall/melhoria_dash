@@ -345,7 +345,9 @@ def tela_login():
                             "user_id": res.user.id,
                             "user_email": res.user.email,
                             "display_name": res.user.user_metadata.get("display_name", ""),
-                            "logado": True
+                            "logado": True,
+                            "access_token": res.session.access_token,
+                            "refresh_token": res.session.refresh_token,
                         })
                         st.rerun()
                     except Exception as e:
@@ -388,6 +390,16 @@ if "logado" not in st.session_state:
 if not st.session_state["logado"]:
     tela_login()
     st.stop()
+
+# ── Restaurar sessão auth no cliente Supabase ────────────────────────────────
+if st.session_state.get("access_token"):
+    try:
+        supabase.auth.set_session(
+            st.session_state["access_token"],
+            st.session_state["refresh_token"]
+        )
+    except Exception:
+        pass
 
 # ── Processar recorrentes + boas-vindas (1x por sessão) ──────────────────────
 if "recorrentes_processados" not in st.session_state:
