@@ -3,8 +3,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import calendar
 from datetime import date, datetime, timedelta
-from supabase import Client
-from services.supabase_client import supabase
+from supabase import create_client, Client
 from market import get_cotacoes
 from export import gerar_excel
 from styles.main_css import apply_styles
@@ -20,7 +19,12 @@ st.set_page_config(
 )
 apply_styles()
 
-# ── Supabase via services/supabase_client.py ─────────────────────────────────
+# ── Supabase ──────────────────────────────────────────────────────────────────
+@st.cache_resource
+def get_supabase() -> Client:
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
+
+supabase = get_supabase()
 
 
 def uid():
