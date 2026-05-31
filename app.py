@@ -967,7 +967,7 @@ with tab_lanc:
                 nav1, nav2, nav3 = st.columns([1, 2, 1])
                 with nav1:
                     if pag_atual > 1:
-                        if st.button("← Anterior", key="pag_ant", use_container_width=True):
+                        if st.button("← Anterior", key=f"pag_ant_{pag_atual}", use_container_width=True):
                             st.session_state["_lanc_pagina"] = pag_atual - 1
                             st.rerun()
                 with nav2:
@@ -977,7 +977,7 @@ with tab_lanc:
                     </div>""", unsafe_allow_html=True)
                 with nav3:
                     if pag_atual < total_pags:
-                        if st.button("Próxima →", key="pag_prox", use_container_width=True):
+                        if st.button("Próxima →", key=f"pag_prox_{pag_atual}", use_container_width=True):
                             st.session_state["_lanc_pagina"] = pag_atual + 1
                             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
