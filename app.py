@@ -1270,7 +1270,6 @@ with tab_rec:
         st.markdown("</div>", unsafe_allow_html=True)
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-import plotly.graph_objects as go
 import pandas as pd
 import calendar
 from datetime import date, datetime, timedelta
