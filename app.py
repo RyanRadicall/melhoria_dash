@@ -69,7 +69,20 @@ def cached_lancamentos(_uid, mes=None, ano=None):
     if mes and ano:
         ultimo_dia = calendar.monthrange(ano, mes)[1]
         q = q.gte("data", f"{ano}-{mes:02d}-01").lte("data", f"{ano}-{mes:02d}-{ultimo_dia:02d}")
+    else:
+        # Sem filtro: limita aos últimos 12 meses para evitar full scan
+        from datetime import date
+        hoje = date.today()
+        ano_12 = hoje.year - 1 if hoje.month == 12 else hoje.year - (1 if hoje.month < 12 else 0)
+        mes_12 = (hoje.month % 12) + 1 if hoje.month == 12 else hoje.month
+        corte  = f"{hoje.year - 1}-{hoje.month:02d}-01"
+        q = q.gte("data", corte)
     return q.order("data", desc=True).execute().data or []
+
+@st.cache_data(ttl=300)
+def cached_lancamentos_todos(_uid):
+    """Todos os lançamentos sem limite — usado apenas para exportação."""
+    return supabase.table("lancamentos").select("*").eq("user_id", _uid)        .order("data", desc=True).execute().data or []
 
 @st.cache_data(ttl=120)
 def cached_investimentos(_uid):
@@ -100,6 +113,10 @@ def invalidar_cache_secundario():
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
 def db_lancamentos(mes=None, ano=None):
     return cached_lancamentos(uid(), mes, ano)
+
+def db_lancamentos_todos():
+    """Retorna todos os lançamentos sem limite de período — para exportação."""
+    return cached_lancamentos_todos(uid())
 
 def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
     supabase.table("lancamentos").insert({
@@ -730,7 +747,7 @@ with tab_dash:
     st.markdown('<div class="panel"><div class="panel-title">📥 Exportar Relatório</div>', unsafe_allow_html=True)
     col_ex1, col_ex2, col_ex3 = st.columns(3)
     with col_ex1:
-        todos_lanc = db_lancamentos()
+        todos_lanc = db_lancamentos_todos()
         xlsx_bytes = gerar_excel(todos_lanc, db_investimentos(), db_metas())
         mes_nome = MESES_BR[hoje.month-1]
         st.download_button(
