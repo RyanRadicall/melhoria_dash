@@ -456,16 +456,35 @@ with tab_dash:
     # Taxa de poupança
     taxa_poupar = round(saldo / entradas * 100) if entradas > 0 else 0
 
+    # ── Comparativo mês anterior ─────────────────────────────────────────────
+    mes_ant = mes_sel - 1 if mes_sel > 1 else 12
+    ano_ant = ano_sel if mes_sel > 1 else ano_sel - 1
+    txs_ant = db_lancamentos(mes=mes_ant, ano=ano_ant)
+    ent_ant = sum(t["valor"] for t in txs_ant if t["tipo"]=="entrada")
+    sai_ant = sum(t["valor"] for t in txs_ant if t["tipo"]=="saida")
+    sal_ant = ent_ant - sai_ant
+
+    def variacao_vs(atual, anterior):
+        if anterior == 0:
+            return "", True
+        pct = ((atual - anterior) / anterior) * 100
+        sinal = "+" if pct >= 0 else ""
+        return f"{sinal}{pct:.1f}% vs mês ant.", pct >= 0
+
+    delta_ent, up_ent = variacao_vs(entradas, ent_ant)
+    delta_sai, up_sai = variacao_vs(saidas, sai_ant)
+    delta_sal, up_sal = variacao_vs(saldo, sal_ant)
+
     # KPIs — 6 cards em 2 linhas de 3
     kpis_row1 = [
-        ("💰","RECEITA",       fmt(entradas),   "Total recebido",       True,       "kpi-purple","#7c3aed"),
-        ("💸","DESPESAS",      fmt(saidas),     "Total gasto",          saidas==0,  "kpi-blue",  "#2563eb"),
-        ("⚖️","SALDO",         fmt(saldo),      "Caixa disponível",     saldo>=0,   "kpi-green", "#16a34a"),
+        ("💰","RECEITA",       fmt(entradas),    delta_ent or "Total recebido",     up_ent,          "kpi-purple","#7c3aed"),
+        ("💸","DESPESAS",      fmt(saidas),      delta_sai or "Total gasto",        not up_sai,      "kpi-blue",  "#2563eb"),
+        ("⚖️","SALDO",         fmt(saldo),       delta_sal or "Caixa disponível",   saldo>=0,        "kpi-green", "#16a34a"),
     ]
     kpis_row2 = [
-        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",  taxa_poupar>=20, "kpi-teal",  "#0891b2"),
-        ("📊","INVESTIMENTOS", fmt(invest),     "Total aplicado",       True,       "kpi-amber", "#d97706"),
-        ("🏛️","PATRIMÔNIO",   fmt(patrimonio), "Patrimônio total",     True,       "kpi-rose",  "#e11d48"),
+        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",            taxa_poupar>=20, "kpi-teal",  "#0891b2"),
+        ("📊","INVESTIMENTOS", fmt(invest),       "Total aplicado",                 True,            "kpi-amber", "#d97706"),
+        ("🏛️","PATRIMÔNIO",   fmt(patrimonio),   "Patrimônio total",               True,            "kpi-rose",  "#e11d48"),
     ]
 
     for row in [kpis_row1, kpis_row2]:
@@ -665,18 +684,32 @@ with tab_dash:
                         prazo_info = ' · <span style="color:#f87171">Vencida</span>'
                 except:
                     pass
+            # Ritmo necessário para atingir a meta no prazo
+            ritmo_info = ""
+            if m.get("prazo") and pct < 100:
+                try:
+                    prazo_dt2  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    dias_rest2 = (prazo_dt2 - date.today()).days
+                    if dias_rest2 > 0:
+                        faltam     = m["total"] - m["atual"]
+                        meses_rest = max(dias_rest2 / 30, 1)
+                        por_mes    = faltam / meses_rest
+                        ritmo_info = f'<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:2px">💡 Guardar {fmt(por_mes)}/mês para chegar lá</div>'
+                except:
+                    pass
             st.markdown(f"""
             <div style="margin-bottom:16px">
               <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
-                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m['nome']}{prazo_info}</span>
-                <span style="color:{m['cor']};font-weight:700">{pct}%</span>
+                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m["nome"]}{prazo_info}</span>
+                <span style="color:{m["cor"]};font-weight:700">{pct}%</span>
               </div>
               <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}99)"></div>
+                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m["cor"]},{m["cor"]}99)"></div>
               </div>
               <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>{fmt(m['atual'])}</span><span>{fmt(m['total'])}</span>
+                <span>{fmt(m["atual"])}</span><span>{fmt(m["total"])}</span>
               </div>
+              {ritmo_info}
             </div>""", unsafe_allow_html=True)
         if not metas:
             st.info("Nenhuma meta cadastrada.")
@@ -747,7 +780,20 @@ with tab_lanc:
         if st.button("✅ Adicionar lançamento", use_container_width=True, key="btn_add_tx"):
             if nome.strip():
                 db_add_lancamento(nome.strip(), cat, valor, tipo, icon, data_l)
-                st.success(f"✅ '{nome}' salvo!")
+                st.toast(f"✅ '{nome}' adicionado!", icon="💾")
+                if tipo == "saida":
+                    orcs_check = db_orcamentos()
+                    orc_cat    = next((o for o in orcs_check if o["categoria"] == cat), None)
+                    if orc_cat:
+                        hoje_c    = date.today()
+                        txs_check = db_lancamentos(mes=hoje_c.month, ano=hoje_c.year)
+                        gasto_cat = sum(t["valor"] for t in txs_check if t["tipo"]=="saida" and t["categoria"]==cat)
+                        limite    = orc_cat["limite"]
+                        pct_uso   = gasto_cat / limite * 100 if limite > 0 else 0
+                        if pct_uso >= 100:
+                            st.error(f"🚨 Orçamento de **{cat}** estourado! Gasto: {fmt(gasto_cat)} / Limite: {fmt(limite)}")
+                        elif pct_uso >= 80:
+                            st.warning(f"⚠️ Orçamento de **{cat}** em {pct_uso:.0f}%! Restam apenas {fmt(limite - gasto_cat)}")
                 st.rerun()
             else:
                 st.error("Digite uma descrição.")
