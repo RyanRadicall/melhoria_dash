@@ -961,25 +961,25 @@ with tab_lanc:
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
-            # ── Navegação de páginas ───────────────────────────────────────────
-            if txs_all and total_pags > 1:
-                st.markdown("<br>", unsafe_allow_html=True)
-                nav1, nav2, nav3 = st.columns([1, 2, 1])
-                with nav1:
-                    if pag_atual > 1:
-                        if st.button("← Anterior", key=f"pag_ant_{pag_atual}", use_container_width=True):
-                            st.session_state["_lanc_pagina"] = pag_atual - 1
-                            st.rerun()
-                with nav2:
-                    st.markdown(f"""
-                    <div style="text-align:center;font-size:12px;color:rgba(255,255,255,0.4);padding-top:8px">
-                      Página {pag_atual} de {total_pags} · {len(txs_all)} lançamentos
-                    </div>""", unsafe_allow_html=True)
-                with nav3:
-                    if pag_atual < total_pags:
-                        if st.button("Próxima →", key=f"pag_prox_{pag_atual}", use_container_width=True):
-                            st.session_state["_lanc_pagina"] = pag_atual + 1
-                            st.rerun()
+        # ── Navegação de páginas ───────────────────────────────────────────
+        if txs_all and total_pags > 1:
+            st.markdown("<br>", unsafe_allow_html=True)
+            nav1, nav2, nav3 = st.columns([1, 2, 1])
+            with nav1:
+                if pag_atual > 1:
+                    if st.button("← Anterior", key="pag_ant", use_container_width=True):
+                        st.session_state["_lanc_pagina"] = pag_atual - 1
+                        st.rerun()
+            with nav2:
+                st.markdown(f"""
+                <div style="text-align:center;font-size:12px;color:rgba(255,255,255,0.4);padding-top:8px">
+                  Página {pag_atual} de {total_pags} · {len(txs_all)} lançamentos
+                </div>""", unsafe_allow_html=True)
+            with nav3:
+                if pag_atual < total_pags:
+                    if st.button("Próxima →", key="pag_prox", use_container_width=True):
+                        st.session_state["_lanc_pagina"] = pag_atual + 1
+                        st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
