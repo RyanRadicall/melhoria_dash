@@ -1258,13 +1258,35 @@ with tab_rec:
         recs = db_recorrentes()
         total_rec = sum(r["valor"] for r in recs)
         total_rec_anual = total_rec * 12
+
         if recs:
-            st.markdown(f"""
-            <div style="display:flex;gap:20px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:14px;flex-wrap:wrap">
+            # % da renda mensal atual
+            hoje_r    = date.today()
+            txs_renda = db_lancamentos(mes=hoje_r.month, ano=hoje_r.year)
+            renda_mes = sum(t["valor"] for t in txs_renda if t["tipo"]=="entrada")
+            pct_renda = round(total_rec / renda_mes * 100) if renda_mes > 0 else 0
+            cor_pct   = "#f87171" if pct_renda >= 50 else ("#fbbf24" if pct_renda >= 30 else "#4ade80")
+            st.markdown(f'''<div style="display:flex;gap:20px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px;flex-wrap:wrap;align-items:center">
               <span>{len(recs)} recorrentes</span>
-              <span style="color:#c4b5fd">Mensal: {fmt(total_rec)}</span>
+              <span style="color:#c4b5fd;font-size:13px;font-weight:700">Mensal: {fmt(total_rec)}</span>
               <span style="color:rgba(196,181,253,0.5)">Anual: {fmt(total_rec_anual)}</span>
-            </div>""", unsafe_allow_html=True)
+              <span style="color:{cor_pct};font-weight:600">{pct_renda}% da renda</span>
+            </div>''', unsafe_allow_html=True)
+
+            # Breakdown por categoria
+            cats_rec = {}
+            for r in recs:
+                cats_rec[r["categoria"]] = cats_rec.get(r["categoria"], 0) + r["valor"]
+            cats_rec_sorted = sorted(cats_rec.items(), key=lambda x: x[1], reverse=True)
+            maior = cats_rec_sorted[0][1] if cats_rec_sorted else 1
+            rows = []
+            for cat, val in cats_rec_sorted:
+                pct_cat = round(val / total_rec * 100) if total_rec > 0 else 0
+                bar_w   = round(val / maior * 100)
+                cor_cat = CORES_MAP.get(cat, "#7c3aed")
+                rows.append(f'<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:rgba(255,255,255,0.6)">{cat}</span><span style="color:{cor_cat};font-weight:600">{fmt(val)} · {pct_cat}%</span></div><div style="background:rgba(255,255,255,0.06);border-radius:4px;height:5px"><div style="width:{bar_w}%;background:{cor_cat};border-radius:4px;height:5px"></div></div></div>')
+            st.markdown('<div style="margin-bottom:14px">' + "".join(rows) + '</div>', unsafe_allow_html=True)
+            st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.07);margin-bottom:12px"></div>', unsafe_allow_html=True)
         else:
             st.info("Nenhuma despesa recorrente cadastrada.")
         for r in recs:
