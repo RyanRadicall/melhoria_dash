@@ -569,6 +569,30 @@ with tab_dash:
           </div>
         </div>""", unsafe_allow_html=True)
 
+    # ── Resumo anual ──────────────────────────────────────────────────────────
+    if hist:
+        df_ano = pd.DataFrame(hist)
+        df_ano = df_ano[pd.to_datetime(df_ano["data"]).dt.year == ano_sel]
+        ent_ano = df_ano[df_ano["tipo"]=="entrada"]["valor"].sum() if len(df_ano) else 0
+        sai_ano = df_ano[df_ano["tipo"]=="saida"]["valor"].sum() if len(df_ano) else 0
+        sal_ano = ent_ano - sai_ano
+        eco_pct = round(sal_ano / ent_ano * 100) if ent_ano > 0 else 0
+        cor_ano = "#4ade80" if sal_ano >= 0 else "#f87171"
+        st.markdown(f"""
+        <div class="panel" style="margin-bottom:8px">
+          <div class="panel-title">📆 Resumo {ano_sel}</div>
+          <div style="display:flex;gap:32px;flex-wrap:wrap;padding:4px 0">
+            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">RECEITA ANUAL</div>
+              <div style="font-size:18px;font-weight:700;color:#4ade80">{fmt(ent_ano)}</div></div>
+            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">GASTOS ANUAIS</div>
+              <div style="font-size:18px;font-weight:700;color:#f87171">{fmt(sai_ano)}</div></div>
+            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">SALDO ACUMULADO</div>
+              <div style="font-size:18px;font-weight:700;color:{cor_ano}">{fmt(sal_ano)}</div></div>
+            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">TAXA DE POUPANÇA</div>
+              <div style="font-size:18px;font-weight:700;color:{cor_ano}">{eco_pct}%</div></div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
     # ── Gráfico Histórico ─────────────────────────────────────────────────────
     st.markdown('<div class="panel"><div class="panel-title">📅 Histórico Mensal — Entradas vs Saídas</div>', unsafe_allow_html=True)
     if hist:
@@ -614,6 +638,31 @@ with tab_dash:
             hovermode="x unified",
         )
         st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar":False})
+
+        # Evolução do saldo acumulado
+        saldo_acum = []
+        acum = 0
+        for e, s in zip(ents, sais):
+            acum += (e - s)
+            saldo_acum.append(acum)
+        cores_pts = ["#4ade80" if v >= 0 else "#f87171" for v in saldo_acum]
+        fig_acum = go.Figure()
+        fig_acum.add_trace(go.Scatter(
+            x=meses_todos, y=saldo_acum,
+            mode="lines+markers",
+            line=dict(color="#a78bfa", width=2),
+            marker=dict(size=7, color=cores_pts, line=dict(color="#a78bfa", width=1)),
+            fill="tozeroy", fillcolor="rgba(167,139,250,0.08)",
+            hovertemplate="<b>%{x}</b><br>Acumulado: R$ %{y:,.2f}<extra></extra>",
+        ))
+        fig_acum.update_layout(**plotly_cfg(), height=140,
+            yaxis=dict(gridcolor="rgba(255,255,255,0.05)", tickfont=dict(size=9, color="rgba(255,255,255,0.3)"),
+                       zeroline=True, zerolinecolor="rgba(255,255,255,0.15)", zerolinewidth=1),
+            xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=10, color="rgba(255,255,255,0.35)")),
+            showlegend=False, margin=dict(l=10,r=10,t=4,b=10),
+        )
+        st.markdown('<div style="font-size:11px;color:rgba(255,255,255,0.35);margin:8px 0 2px 0">📈 Saldo acumulado</div>', unsafe_allow_html=True)
+        st.plotly_chart(fig_acum, use_container_width=True, config={"displayModeBar":False})
     else:
         st.info("Adicione lançamentos para ver o histórico mensal.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -809,7 +858,11 @@ with tab_lanc:
         data_l = st.date_input("Data", value=date.today(), key="f_data")
 
         if st.button("✅ Adicionar lançamento", use_container_width=True, key="btn_add_tx"):
-            if nome.strip():
+            if not nome.strip():
+                st.error("⚠️ Digite uma descrição para o lançamento.")
+            elif valor <= 0:
+                st.error("⚠️ O valor precisa ser maior que zero.")
+            else:
                 db_add_lancamento(nome.strip(), cat, valor, tipo, icon, data_l)
                 st.toast(f"✅ '{nome}' adicionado!", icon="💾")
                 if tipo == "saida":
@@ -826,8 +879,6 @@ with tab_lanc:
                         elif pct_uso >= 80:
                             st.warning(f"⚠️ Orçamento de **{cat}** em {pct_uso:.0f}%! Restam apenas {fmt(limite - gasto_cat)}")
                 st.rerun()
-            else:
-                st.error("Digite uma descrição.")
         st.markdown("</div>", unsafe_allow_html=True)
 
         # ── Mini resumo rápido ─────────────────────────────────────────────
@@ -1137,6 +1188,7 @@ with tab_metas:
         metas_list = db_metas()
         if not metas_list:
             st.info("Nenhuma meta cadastrada ainda.")
+        metas_list = sorted(metas_list, key=lambda m: (min(round(m["atual"]/m["total"]*100) if m["total"]>0 else 0, 100) >= 100, 0))
         for m in metas_list:
             pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
             falta = m["total"] - m["atual"]
