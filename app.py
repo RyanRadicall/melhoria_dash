@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from supabase import Client
 from services.supabase_client import supabase
 from market import get_cotacoes
-from export import gerar_excel
+from export import gerar_excel, gerar_pdf
 from styles.main_css import apply_styles
 from utils.constants import ICONES, CATS, CORES, CORES_MAP, COR_LABEL
 from utils.formatters import fmt, fmt_compact, plotly_cfg, MESES_BR
@@ -856,8 +856,23 @@ with tab_dash:
         else:
             st.info("Sem lançamentos para exportar.")
     with col_ex3:
+        try:
+            pdf_bytes = gerar_pdf(
+                todos_lanc, db_investimentos(), db_metas(),
+                nome_usuario=primeiro_nome(),
+                mes=mes_sel, ano=ano_sel,
+            )
+            st.download_button(
+                label="📑 Baixar PDF",
+                data=pdf_bytes,
+                file_name=f"finance_pro_{hoje.year}_{mes_nome}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except ImportError:
+            st.caption("PDF: adicione fpdf2 ao requirements.txt")
         st.markdown(f"""
-        <div style="text-align:center;padding:8px;font-size:12px;color:rgba(255,255,255,0.4)">
+        <div style="text-align:center;padding:4px;font-size:11px;color:rgba(255,255,255,0.3)">
           {len(todos_lanc)} lançamentos · {len(db_investimentos())} ativos · {len(db_metas())} metas
         </div>""", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
