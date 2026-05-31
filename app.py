@@ -1021,12 +1021,12 @@ with tab_invest:
         st.markdown('<div class="form-box"><div class="form-title">➕ Novo Ativo</div>', unsafe_allow_html=True)
         inv_nome = st.text_input("Nome do ativo", placeholder="Ex: Tesouro Selic 2029", key="inv_nome")
         inv_val  = st.number_input("Valor (R$)", min_value=0.0, step=100.0, format="%.2f", key="inv_val")
-        inv_chg  = st.text_input("Variação", placeholder="Ex: +5.2%", key="inv_chg")
+        inv_chg  = st.number_input("Variação (%)", min_value=-100.0, max_value=1000.0, step=0.01, format="%.2f", key="inv_chg", help="Ex: 2.14 para +2.14%, -1.20 para queda")
         inv_cor  = st.selectbox("Cor", CORES, format_func=lambda c:COR_LABEL.get(c,c), key="inv_cor")
         if st.button("✅ Adicionar ativo", use_container_width=True, key="btn_add_inv"):
             if inv_nome.strip():
-                db_add_investimento(inv_nome.strip(), inv_val, inv_chg or "0%", inv_cor)
-                st.success(f"✅ '{inv_nome}' adicionado!")
+                db_add_investimento(inv_nome.strip(), inv_val, inv_chg, inv_cor)
+                st.toast(f"✅ '{inv_nome}' adicionado!", icon="📊")
                 st.rerun()
             else:
                 st.error("Digite o nome do ativo.")
@@ -1036,10 +1036,16 @@ with tab_invest:
         total_port = sum(i["valor"] for i in invs_list)
         st.markdown('<div class="panel"><div class="panel-title">🏦 Seus Ativos</div>', unsafe_allow_html=True)
         if invs_list:
-            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Total: {fmt(total_port)}</div>', unsafe_allow_html=True)
+            var_pond = sum(float(i["variacao"] or 0) * i["valor"] for i in invs_list) / total_port if total_port > 0 else 0
+            var_cor  = "#4ade80" if var_pond >= 0 else "#f87171"
+            var_sinal = "+" if var_pond >= 0 else ""
+            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Total: {fmt(total_port)} · <span style="color:{var_cor};font-weight:600">{var_sinal}{var_pond:.2f}% variação ponderada</span></div>', unsafe_allow_html=True)
         for inv in invs_list:
             pct       = round(inv["valor"]/total_port*100) if total_port>0 else 0
-            chg_color = "#4ade80" if str(inv["variacao"]).startswith("+") else "#f87171"
+            chg_val   = float(inv["variacao"] or 0)
+            chg_color = "#4ade80" if chg_val >= 0 else "#f87171"
+            chg_sinal = "+" if chg_val >= 0 else ""
+            chg_label = f"{chg_sinal}{chg_val:.2f}%"
             ci,cd     = st.columns([5,1])
             with ci:
                 st.markdown(f"""
@@ -1052,7 +1058,7 @@ with tab_invest:
                   </div>
                   <div style="text-align:right;flex-shrink:0">
                     <div style="font-size:13px;font-weight:800">{fmt(inv['valor'])}</div>
-                    <div style="font-size:11px;color:{chg_color};font-weight:700">{inv['variacao']}</div>
+                    <div style="font-size:11px;color:{chg_color};font-weight:700">{chg_label}</div>
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
