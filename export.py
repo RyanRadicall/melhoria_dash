@@ -502,8 +502,12 @@ def gerar_pdf(
 
         mes  = mes  or date.today().month
         ano  = ano  or date.today().year
-        MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+        MESES = ["Janeiro","Fevereiro","Marco","Abril","Maio","Junho",
                   "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+
+        def s(txt):
+            """Converte texto para latin-1 seguro para fpdf2."""
+            return str(txt).encode("latin-1", errors="replace").decode("latin-1")
         mes_nome = MESES[mes - 1]
 
         total_ent = sum(t.get("valor",0) for t in lancamentos if t.get("tipo")=="entrada")
@@ -531,12 +535,12 @@ def gerar_pdf(
         pdf.set_xy(10, 20)
         pdf.set_font("Helvetica", "", 11)
         pdf.set_text_color(200, 200, 220)
-        pdf.cell(0, 8, f"Relatório de {mes_nome}/{ano}  —  {nome_usuario}", ln=True)
+        pdf.cell(0, 8, s(f"Relatorio de {mes_nome}/{ano}  -  {nome_usuario}"), ln=True)
 
         pdf.set_xy(10, 30)
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(150, 150, 180)
-        pdf.cell(0, 6, f"Gerado em {date.today().strftime('%d/%m/%Y')}", ln=True)
+        pdf.cell(0, 6, s(f"Gerado em {date.today().strftime('%d/%m/%Y')}"), ln=True)
 
         # Linha roxa
         pdf.set_fill_color(124, 58, 237)
@@ -547,14 +551,14 @@ def gerar_pdf(
         # ── KPIs ──────────────────────────────────────────────────────────────
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(30, 27, 75)
-        pdf.cell(0, 6, "RESUMO DO PERÍODO", ln=True)
+        pdf.cell(0, 6, s("RESUMO DO PERIODO"), ln=True)
         pdf.ln(2)
 
         kpis_pdf = [
-            ("RECEITA",    fmtv(total_ent), (22, 163, 74)),
-            ("DESPESAS",   fmtv(total_sai), (220, 38, 38)),
-            ("SALDO",      fmtv(saldo),     (124, 58, 237)),
-            ("POUPANÇA",   f"{poupanca}%",  (8, 145, 178)),
+            (s("RECEITA"),    s(fmtv(total_ent)), (22, 163, 74)),
+            (s("DESPESAS"),   s(fmtv(total_sai)), (220, 38, 38)),
+            (s("SALDO"),      s(fmtv(saldo)),     (124, 58, 237)),
+            (s("POUPANCA"),   s(f"{poupanca}%"),  (8, 145, 178)),
         ]
 
         box_w = 44
@@ -568,28 +572,28 @@ def gerar_pdf(
             pdf.set_xy(x + 5, y + 2)
             pdf.set_font("Helvetica", "B", 7)
             pdf.set_text_color(100, 116, 139)
-            pdf.cell(box_w - 6, 4, label, ln=True)
+            pdf.cell(box_w - 6, 4, s(label), ln=True)
             pdf.set_xy(x + 5, y + 8)
             pdf.set_font("Helvetica", "B", 11)
             pdf.set_text_color(*cor)
-            pdf.cell(box_w - 6, 6, valor, ln=False)
+            pdf.cell(box_w - 6, 6, s(valor), ln=False)
 
         pdf.ln(25)
 
         # ── Tabela de lançamentos ──────────────────────────────────────────────
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(30, 27, 75)
-        pdf.cell(0, 6, f"LANÇAMENTOS ({len(lancamentos)} registros)", ln=True)
+        pdf.cell(0, 6, s(f"LANCAMENTOS ({len(lancamentos)} registros)"), ln=True)
         pdf.ln(1)
 
         # Cabeçalho da tabela
         col_ws = [18, 65, 35, 25, 30]
-        headers_pdf = ["Data", "Descrição", "Categoria", "Tipo", "Valor (R$)"]
+        headers_pdf = [s("Data"), s("Descricao"), s("Categoria"), s("Tipo"), s("Valor (R$)")]
         pdf.set_fill_color(124, 58, 237)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 8)
         for i, (h, w) in enumerate(zip(headers_pdf, col_ws)):
-            pdf.cell(w, 7, h, border=0, fill=True, align="C")
+            pdf.cell(w, 7, s(h), border=0, fill=True, align="C")
         pdf.ln()
 
         # Linhas de dados
@@ -602,43 +606,43 @@ def gerar_pdf(
             pdf.set_text_color(15, 15, 15)
             pdf.set_font("Helvetica", "", 8)
 
-            pdf.cell(col_ws[0], 6, str(t.get("data",""))[:10], border=0, fill=True, align="C")
-            pdf.cell(col_ws[1], 6, t.get("nome","")[:35], border=0, fill=True)
-            pdf.cell(col_ws[2], 6, t.get("categoria",""), border=0, fill=True, align="C")
+            pdf.cell(col_ws[0], 6, s(str(t.get("data",""))[:10]), border=0, fill=True, align="C")
+            pdf.cell(col_ws[1], 6, s(t.get("nome","")[:35]), border=0, fill=True)
+            pdf.cell(col_ws[2], 6, s(t.get("categoria","")), border=0, fill=True, align="C")
 
-            tipo_label = "Entrada" if is_ent else "Saida"
+            tipo_label = s("Entrada") if is_ent else s("Saida")
             pdf.set_text_color(22, 163, 74) if is_ent else pdf.set_text_color(220, 38, 38)
             pdf.set_font("Helvetica", "B", 8)
             pdf.cell(col_ws[3], 6, tipo_label, border=0, fill=True, align="C")
 
             pdf.set_text_color(22, 163, 74) if is_ent else pdf.set_text_color(220, 38, 38)
-            pdf.cell(col_ws[4], 6, fmtv(t.get("valor",0)), border=0, fill=True, align="R")
+            pdf.cell(col_ws[4], 6, s(fmtv(t.get("valor",0))), border=0, fill=True, align="R")
             pdf.ln()
 
         # Total
         pdf.set_fill_color(30, 27, 75)
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(sum(col_ws[:4]), 7, "SALDO DO PERÍODO", fill=True, align="R")
+        pdf.cell(sum(col_ws[:4]), 7, s("SALDO DO PERIODO"), fill=True, align="R")
         pdf.set_text_color(74, 222, 128) if saldo >= 0 else pdf.set_text_color(248, 113, 113)
-        pdf.cell(col_ws[4], 7, fmtv(saldo), fill=True, align="R")
+        pdf.cell(col_ws[4], 7, s(fmtv(saldo)), fill=True, align="R")
         pdf.ln(10)
 
         # ── Metas ─────────────────────────────────────────────────────────────
         if metas:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(30, 27, 75)
-            pdf.cell(0, 6, "METAS FINANCEIRAS", ln=True)
+            pdf.cell(0, 6, s("METAS FINANCEIRAS"), ln=True)
             pdf.ln(1)
 
             for m in metas:
                 pct = min(round(m.get("atual",0) / m.get("total",1) * 100), 100)
                 pdf.set_font("Helvetica", "B", 9)
                 pdf.set_text_color(15, 15, 15)
-                pdf.cell(100, 5, m.get("nome",""), ln=False)
+                pdf.cell(100, 5, s(m.get("nome","")), ln=False)
                 pdf.set_font("Helvetica", "", 9)
                 pdf.set_text_color(100, 116, 139)
-                pdf.cell(0, 5, f"{fmtv(m.get('atual',0))} / {fmtv(m.get('total',0))}  ({pct}%)", ln=True)
+                pdf.cell(0, 5, s(f"{fmtv(m.get('atual',0))} / {fmtv(m.get('total',0))}  ({pct}%)"), ln=True)
 
                 # Barra de progresso
                 bar_x = pdf.get_x() + 10
@@ -657,7 +661,7 @@ def gerar_pdf(
         pdf.ln(2)
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(150, 150, 180)
-        pdf.cell(0, 5, "Finance PRO — Relatório gerado automaticamente", align="C")
+        pdf.cell(0, 5, s("Finance PRO - Relatorio gerado automaticamente"), align="C")
 
         return bytes(pdf.output())
 
