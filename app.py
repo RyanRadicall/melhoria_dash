@@ -1270,7 +1270,6 @@ with tab_rec:
         st.markdown("</div>", unsafe_allow_html=True)
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
- import streamlit as stimport streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import calendar
