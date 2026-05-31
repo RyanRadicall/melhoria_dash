@@ -1141,33 +1141,53 @@ with tab_metas:
             pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
             falta = m["total"] - m["atual"]
 
+            # Badge de status
+            if pct >= 100:
+                badge = '<span style="font-size:10px;background:#16a34a22;color:#4ade80;border:1px solid #4ade8044;border-radius:20px;padding:2px 8px;margin-left:8px">✅ Concluída</span>'
+            elif m.get("prazo"):
+                try:
+                    prazo_dt  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    dias_rest = (prazo_dt - date.today()).days
+                    if dias_rest < 0:
+                        badge = '<span style="font-size:10px;background:#dc262622;color:#f87171;border:1px solid #f8717144;border-radius:20px;padding:2px 8px;margin-left:8px">🔴 Vencida</span>'
+                    elif dias_rest <= 7:
+                        badge = f'<span style="font-size:10px;background:#ca8a0422;color:#fbbf24;border:1px solid #fbbf2444;border-radius:20px;padding:2px 8px;margin-left:8px">⚠️ {dias_rest}d restantes</span>'
+                    elif dias_rest <= 30:
+                        badge = f'<span style="font-size:10px;background:#ca8a0411;color:#fbbf24;border:1px solid #fbbf2433;border-radius:20px;padding:2px 8px;margin-left:8px">📅 {dias_rest}d restantes</span>'
+                    else:
+                        badge = f'<span style="font-size:10px;color:rgba(255,255,255,0.3);margin-left:8px">📅 {dias_rest}d</span>'
+                except:
+                    badge = ""
+            else:
+                badge = ""
+
             # Prazo e projeção
             prazo_html = ""
-            if m.get("prazo"):
+            if m.get("prazo") and pct < 100:
                 try:
-                    prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    prazo_dt  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
                     dias_rest = (prazo_dt - date.today()).days
                     if dias_rest > 0 and falta > 0:
                         aporte_diario = falta / dias_rest
-                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">📅 {dias_rest} dias restantes · Aporte diário necessário: {fmt(aporte_diario)}</div>'
+                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">💡 Aporte diário necessário: {fmt(aporte_diario)}</div>'
                     elif dias_rest <= 0:
-                        prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">⚠️ Prazo vencido</div>'
+                        prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">Prazo encerrado — atualize ou remova a meta.</div>'
                 except:
                     pass
 
             st.markdown(f"""
             <div style="margin-bottom:8px">
-              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px">
-                <span style="color:rgba(255,255,255,0.85)">{m['nome']}</span>
-                <span style="color:{m['cor']};text-shadow:0 0 12px {m['cor']}88">{pct}%</span>
+              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px;align-items:center">
+                <span style="color:rgba(255,255,255,0.85)">{m["nome"]}{badge}</span>
+                <span style="color:{m["cor"]};text-shadow:0 0 12px {m["cor"]}88">{pct}%</span>
               </div>
               <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}88)"></div>
+                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m["cor"]},{m["cor"]}88)"></div>
               </div>
               <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>Atual: {fmt(m['atual'])}</span>
+                <span>Atual: {fmt(m["atual"])}</span>
                 <span style="color:rgba(255,255,255,0.45)">Falta: {fmt(max(falta,0))}</span>
-                <span>Meta: {fmt(m['total'])}</span>
+                <span>Meta: {fmt(m["total"])}</span>
               </div>
               {prazo_html}
             </div>""", unsafe_allow_html=True)
