@@ -867,7 +867,6 @@ with tab_lanc:
         elif ordenacao == "Menor valor":
             txs_all = sorted(txs_all, key=lambda t: t["valor"])
 
-        total_filtrado   = sum(t["valor"] for t in txs_all)
         total_entradas_f = sum(t["valor"] for t in txs_all if t["tipo"]=="entrada")
         total_saidas_f   = sum(t["valor"] for t in txs_all if t["tipo"]=="saida")
 
@@ -881,8 +880,22 @@ with tab_lanc:
 
         if not txs_all:
             st.info("Nenhum lançamento encontrado.")
+        else:
+            # ── Paginação ─────────────────────────────────────────────────────
+            POR_PAGINA = 20
+            total_pags = max(1, -(-len(txs_all) // POR_PAGINA))  # ceil division
 
-        for t in txs_all:
+            # Reseta página se filtros mudaram
+            filtro_hash = f"{filtro_tipo}{filtro_cat}{filtro_mes}{busca}{ordenacao}"
+            if st.session_state.get("_lanc_filtro_hash") != filtro_hash:
+                st.session_state["_lanc_filtro_hash"] = filtro_hash
+                st.session_state["_lanc_pagina"] = 1
+
+            pag_atual = st.session_state.get("_lanc_pagina", 1)
+            inicio    = (pag_atual - 1) * POR_PAGINA
+            txs_pag   = txs_all[inicio:inicio + POR_PAGINA]
+
+        for t in txs_pag if txs_all else []:
             sinal = "+" if t["tipo"]=="entrada" else "-"
             cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
             borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
@@ -947,6 +960,26 @@ with tab_lanc:
                             st.session_state.pop(edit_key, None)
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
+
+            # ── Navegação de páginas ───────────────────────────────────────────
+            if txs_all and total_pags > 1:
+                st.markdown("<br>", unsafe_allow_html=True)
+                nav1, nav2, nav3 = st.columns([1, 2, 1])
+                with nav1:
+                    if pag_atual > 1:
+                        if st.button("← Anterior", key="pag_ant", use_container_width=True):
+                            st.session_state["_lanc_pagina"] = pag_atual - 1
+                            st.rerun()
+                with nav2:
+                    st.markdown(f"""
+                    <div style="text-align:center;font-size:12px;color:rgba(255,255,255,0.4);padding-top:8px">
+                      Página {pag_atual} de {total_pags} · {len(txs_all)} lançamentos
+                    </div>""", unsafe_allow_html=True)
+                with nav3:
+                    if pag_atual < total_pags:
+                        if st.button("Próxima →", key="pag_prox", use_container_width=True):
+                            st.session_state["_lanc_pagina"] = pag_atual + 1
+                            st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
