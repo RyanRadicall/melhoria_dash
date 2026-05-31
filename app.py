@@ -115,10 +115,16 @@ def db_lancamentos_todos():
     return cached_lancamentos_todos(uid())
 
 def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
+    user = uid()
+    if not user:
+        st.error("Sessão expirada. Faça login novamente.")
+        st.session_state["logado"] = False
+        st.rerun()
+        return
     supabase.table("lancamentos").insert({
-        "user_id":uid(),"nome":nome,"categoria":cat,
-        "valor":val,"tipo":tipo,"icone":icone,
-        "data":str(dt),"recorrente":recorrente,
+        "user_id": user, "nome": nome, "categoria": cat,
+        "valor": float(val), "tipo": tipo, "icone": icone,
+        "data": str(dt), "recorrente": recorrente,
     }).execute()
     invalidar_cache()
 
