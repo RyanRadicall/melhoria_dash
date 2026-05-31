@@ -840,8 +840,12 @@ with tab_lanc:
                                       index=(["Todos"]+MESES_BR).index(default_mes),
                                       key="filtro_mes_lanc")
 
-        # Busca textual
-        busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
+        # Busca + ordenação
+        fb1, fb2 = st.columns([2, 1])
+        with fb1:
+            busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
+        with fb2:
+            ordenacao = st.selectbox("Ordenar por", ["Data ↓", "Data ↑", "Maior valor", "Menor valor"], key="ordem_lanc")
 
         txs_all = db_lancamentos()
         if filtro_tipo == "Entradas":  txs_all = [t for t in txs_all if t["tipo"]=="entrada"]
@@ -852,6 +856,16 @@ with tab_lanc:
             txs_all = [t for t in txs_all if datetime.strptime(str(t["data"])[:10],"%Y-%m-%d").month==mi]
         if busca.strip():
             txs_all = [t for t in txs_all if busca.lower() in t["nome"].lower()]
+
+        # Ordenação
+        if ordenacao == "Data ↓":
+            txs_all = sorted(txs_all, key=lambda t: str(t["data"]), reverse=True)
+        elif ordenacao == "Data ↑":
+            txs_all = sorted(txs_all, key=lambda t: str(t["data"]))
+        elif ordenacao == "Maior valor":
+            txs_all = sorted(txs_all, key=lambda t: t["valor"], reverse=True)
+        elif ordenacao == "Menor valor":
+            txs_all = sorted(txs_all, key=lambda t: t["valor"])
 
         total_filtrado   = sum(t["valor"] for t in txs_all)
         total_entradas_f = sum(t["valor"] for t in txs_all if t["tipo"]=="entrada")
