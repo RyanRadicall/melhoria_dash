@@ -257,77 +257,62 @@ def tela_login():
     @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&display=swap');
 
     .login-logo-text{
-      font-family:'Syne',sans-serif;font-size:54px;font-weight:900;
+      font-family:'Syne',sans-serif;font-size:52px;font-weight:900;
       letter-spacing:-3px;line-height:1;
-      background:linear-gradient(135deg,#ffffff 0%,#c4b5fd 30%,#818cf8 58%,#38bdf8 100%);
+      background:linear-gradient(135deg,#ffffff 0%,#c4b5fd 35%,#818cf8 60%,#38bdf8 100%);
       -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+      filter:drop-shadow(0 0 40px rgba(124,58,237,0.7));
       animation:logoBreath 4s ease-in-out infinite alternate;
     }
     @keyframes logoBreath{
-      0%  {filter:drop-shadow(0 0 24px rgba(124,58,237,0.5)) drop-shadow(0 0 48px rgba(99,102,241,0.3))}
-      100%{filter:drop-shadow(0 0 56px rgba(124,58,237,1))   drop-shadow(0 0 110px rgba(99,102,241,0.6)) drop-shadow(0 0 180px rgba(56,189,248,0.25))}
+      0%  {filter:drop-shadow(0 0 30px rgba(124,58,237,0.6))}
+      100%{filter:drop-shadow(0 0 60px rgba(124,58,237,0.9)) drop-shadow(0 0 120px rgba(99,102,241,0.5))}
     }
-    .login-tagline{font-size:11px;color:rgba(255,255,255,0.28);letter-spacing:5px;text-transform:uppercase;margin-top:12px}
+    .login-tagline{font-size:13px;color:rgba(255,255,255,0.3);letter-spacing:4px;text-transform:uppercase;margin-top:10px}
     .login-badge{
-      display:inline-flex;align-items:center;gap:7px;
-      background:rgba(74,222,128,0.07);border:1px solid rgba(74,222,128,0.22);
-      border-radius:20px;padding:5px 16px;font-size:11px;color:rgba(74,222,128,0.8);
-      margin-top:14px;letter-spacing:1px;animation:badgePulse 2.5s ease-in-out infinite;
+      display:inline-flex;align-items:center;gap:6px;
+      background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);
+      border-radius:20px;padding:4px 14px;font-size:11px;color:rgba(167,139,250,0.8);
+      margin-top:12px;letter-spacing:1px;animation:badgePulse 3s ease-in-out infinite;
     }
-    .login-dot{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;
-               animation:dotBlink 1.5s ease-in-out infinite}
-    @keyframes dotBlink{0%,100%{opacity:1;box-shadow:0 0 6px #4ade80}50%{opacity:.4;box-shadow:none}}
-    @keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,0.15)}50%{box-shadow:0 0 0 8px rgba(74,222,128,0)}}
-
+    @keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(124,58,237,0.2)}50%{box-shadow:0 0 0 6px rgba(124,58,237,0)}}
     .login-card{
-      position:relative;background:rgba(255,255,255,0.016);
-      backdrop-filter:blur(80px) saturate(220%) brightness(1.1);
-      border-radius:36px;padding:48px 42px 38px;
-      border:1px solid rgba(255,255,255,0.06);
-      box-shadow:0 0 0 1px rgba(124,58,237,0.07) inset,0 48px 120px rgba(0,0,0,0.65),0 0 90px rgba(124,58,237,0.07);
-      overflow:hidden;animation:cardFloat 7s ease-in-out infinite alternate;
+      position:relative;
+      background:rgba(255,255,255,0.018);
+      backdrop-filter:blur(60px) saturate(200%);
+      border:1px solid rgba(255,255,255,0.07);
+      border-radius:32px;padding:44px 40px 36px;
+      box-shadow:0 0 0 1px rgba(124,58,237,0.08) inset,0 40px 100px rgba(0,0,0,0.6),0 0 80px rgba(124,58,237,0.08);
+      overflow:hidden;
+      animation:cardFloat 6s ease-in-out infinite alternate;
     }
-    @keyframes cardFloat{0%{transform:translateY(0)}100%{transform:translateY(-10px)}}
-
+    @keyframes cardFloat{0%{transform:translateY(0px)}100%{transform:translateY(-8px)}}
     .login-card::after{
-      content:'';position:absolute;left:0;right:0;height:1.5px;
-      background:linear-gradient(90deg,transparent 0%,rgba(167,139,250,0.0) 15%,rgba(167,139,250,0.7) 40%,rgba(56,189,248,0.5) 60%,rgba(167,139,250,0.0) 85%,transparent 100%);
-      animation:scanLine 5s cubic-bezier(.4,0,.6,1) infinite;
-      pointer-events:none;z-index:10;box-shadow:0 0 16px rgba(167,139,250,0.5);
+      content:'';position:absolute;left:0;right:0;height:2px;
+      background:linear-gradient(90deg,transparent,rgba(167,139,250,0.5),rgba(56,189,248,0.3),transparent);
+      animation:scanLine 4s ease-in-out infinite;pointer-events:none;z-index:10;
+      box-shadow:0 0 20px rgba(167,139,250,0.4);
     }
-    @keyframes scanLine{0%{top:-2px;opacity:0}8%{opacity:1}92%{opacity:1}100%{top:calc(100% + 2px);opacity:0}}
-
-    .login-glow-strip{position:absolute;top:0;left:10%;right:10%;height:1px;
-      background:linear-gradient(90deg,transparent,rgba(167,139,250,0.6),rgba(56,189,248,0.4),transparent)}
-
-    .login-corner{position:absolute;width:22px;height:22px;border-color:rgba(124,58,237,0.5);border-style:solid;transition:border-color .4s}
-    .login-corner.tl{top:18px;left:18px;border-width:2px 0 0 2px;border-radius:5px 0 0 0}
-    .login-corner.tr{top:18px;right:18px;border-width:2px 2px 0 0;border-radius:0 5px 0 0}
-    .login-corner.bl{bottom:18px;left:18px;border-width:0 0 2px 2px;border-radius:0 0 0 5px}
-    .login-corner.br{bottom:18px;right:18px;border-width:0 2px 2px 0;border-radius:0 0 5px 0}
-    .login-card:hover .login-corner{border-color:rgba(167,139,250,0.8)}
-
-    .login-stats{display:flex;gap:8px;margin-bottom:30px}
+    @keyframes scanLine{0%{top:-2px;opacity:0}10%{opacity:1}90%{opacity:1}100%{top:calc(100% + 2px);opacity:0}}
+    .login-corner{position:absolute;width:20px;height:20px;border-color:rgba(124,58,237,0.6);border-style:solid}
+    .login-corner.tl{top:16px;left:16px;border-width:2px 0 0 2px;border-radius:4px 0 0 0}
+    .login-corner.tr{top:16px;right:16px;border-width:2px 2px 0 0;border-radius:0 4px 0 0}
+    .login-corner.bl{bottom:16px;left:16px;border-width:0 0 2px 2px;border-radius:0 0 0 4px}
+    .login-corner.br{bottom:16px;right:16px;border-width:0 2px 2px 0;border-radius:0 0 4px 0}
+    .login-stats{display:flex;gap:10px;margin-bottom:28px}
     .login-stat{
-      flex:1;background:rgba(255,255,255,0.022);border:1px solid rgba(255,255,255,0.055);
-      border-radius:16px;padding:11px 10px;text-align:center;
-      transition:all .35s cubic-bezier(.16,1,.3,1);cursor:default;
+      flex:1;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.06);
+      border-radius:14px;padding:10px 12px;text-align:center;transition:all .3s;
     }
-    .login-stat:hover{background:rgba(124,58,237,0.1);border-color:rgba(124,58,237,0.3);
-      transform:translateY(-3px);box-shadow:0 8px 24px rgba(124,58,237,0.2)}
-    .login-stat-val{font-family:'Syne',sans-serif;font-size:14px;font-weight:800;color:#c4b5fd;letter-spacing:-.5px}
-    .login-stat-lbl{font-size:9px;color:rgba(255,255,255,0.28);text-transform:uppercase;letter-spacing:1.8px;margin-top:3px}
-
-    .login-divider{display:flex;align-items:center;gap:12px;margin:18px 0 14px}
-    .login-divider-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.07),transparent)}
-    .login-divider-text{font-size:9px;color:rgba(255,255,255,0.18);letter-spacing:2.5px;text-transform:uppercase}
-
-    .login-footer{text-align:center;margin-top:22px;font-size:10px;color:rgba(255,255,255,0.13);letter-spacing:1.5px;text-transform:uppercase}
-    .login-security{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:7px;font-size:10px;color:rgba(255,255,255,0.18)}
-    .login-security span{display:inline-flex;align-items:center;gap:4px;
-      background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:3px 8px}
+    .login-stat:hover{background:rgba(124,58,237,0.08);border-color:rgba(124,58,237,0.25);transform:translateY(-2px)}
+    .login-stat-val{font-size:15px;font-weight:800;color:#c4b5fd;letter-spacing:-0.5px}
+    .login-stat-lbl{font-size:9px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:1.5px;margin-top:2px}
+    .login-divider{display:flex;align-items:center;gap:12px;margin:16px 0}
+    .login-divider-line{flex:1;height:1px;background:rgba(255,255,255,0.06)}
+    .login-divider-text{font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:2px}
+    .login-footer{text-align:center;margin-top:20px;font-size:10px;color:rgba(255,255,255,0.15);letter-spacing:1.5px;text-transform:uppercase}
+    .login-security{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:6px;font-size:10px;color:rgba(255,255,255,0.2)}
     </style>
-
     <script>
     (function(){
       function bindEnter(){
@@ -345,37 +330,37 @@ def tela_login():
           });
         });
       }
-      setTimeout(bindEnter,600);setTimeout(bindEnter,2000);
-      new MutationObserver(function(){setTimeout(bindEnter,250);}).observe(document.body,{childList:true,subtree:true});
+      setTimeout(bindEnter,800);setTimeout(bindEnter,2500);
+      new MutationObserver(function(){setTimeout(bindEnter,300)}).observe(document.body,{childList:true,subtree:true});
     })();
     </script>
     """, unsafe_allow_html=True)
 
+    st.markdown("<div style='text-align:center;margin-top:48px;margin-bottom:36px;position:relative;z-index:10'>", unsafe_allow_html=True)
     st.markdown("""
-    <div style="text-align:center;margin-top:52px;margin-bottom:38px;position:relative;z-index:10">
-      <div class="login-logo-text">Finance PRO</div>
-      <div class="login-tagline">Inteligência Financeira Institucional</div>
-      <div style="display:flex;justify-content:center;margin-top:14px">
-        <div class="login-badge"><span class="login-dot"></span>Sistema ativo · Dados protegidos</div>
-      </div>
+    <div class='login-logo-text'>Finance PRO</div>
+    <div class='login-tagline'>Inteligência Financeira Institucional</div>
+    <div class='login-badge'>
+      <span style='width:6px;height:6px;border-radius:50%;background:#4ade80;display:inline-block'></span>
+      Sistema ativo e seguro
     </div>
     """, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.1, 1])
+    _, col, _ = st.columns([1, 1.15, 1])
     with col:
         st.markdown("""
-        <div class="login-card">
-          <div class="login-glow-strip"></div>
-          <div class="login-corner tl"></div><div class="login-corner tr"></div>
-          <div class="login-corner bl"></div><div class="login-corner br"></div>
-          <div class="login-stats">
-            <div class="login-stat"><div class="login-stat-val">256-bit</div><div class="login-stat-lbl">Criptografia</div></div>
-            <div class="login-stat"><div class="login-stat-val">RLS</div><div class="login-stat-lbl">Isolamento</div></div>
-            <div class="login-stat"><div class="login-stat-val">JWT</div><div class="login-stat-lbl">Auth Token</div></div>
+        <div class='login-card'>
+          <div class='login-corner tl'></div><div class='login-corner tr'></div>
+          <div class='login-corner bl'></div><div class='login-corner br'></div>
+          <div class='login-stats'>
+            <div class='login-stat'><div class='login-stat-val'>256-bit</div><div class='login-stat-lbl'>Criptografia</div></div>
+            <div class='login-stat'><div class='login-stat-val'>RLS</div><div class='login-stat-lbl'>Isolamento</div></div>
+            <div class='login-stat'><div class='login-stat-val'>JWT</div><div class='login-stat-lbl'>Auth Token</div></div>
           </div>
         """, unsafe_allow_html=True)
 
-        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True,
+        aba = st.radio("", ["Entrar", "Criar conta"], horizontal=True,
                        label_visibility="collapsed", key="auth_aba")
         st.markdown('<div class="login-divider"><div class="login-divider-line"></div><div class="login-divider-text">acesso seguro</div><div class="login-divider-line"></div></div>', unsafe_allow_html=True)
 
@@ -436,12 +421,9 @@ def tela_login():
                             st.error(f"Erro: {e}")
 
         st.markdown("""
-        <div class="login-footer">
+        <div class='login-footer'>
           Finance PRO &nbsp;·&nbsp; Todos os dados protegidos
-          <div class="login-security">
-            <span>🔒 Criptografia ponta-a-ponta</span>
-            <span>🛡️ Supabase Auth</span>
-          </div>
+          <div class='login-security'>🔒 Conexão criptografada &nbsp;·&nbsp; 🛡️ Supabase Auth</div>
         </div>
         </div>
         """, unsafe_allow_html=True)
