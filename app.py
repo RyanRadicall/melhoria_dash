@@ -3,13 +3,10 @@ import plotly.graph_objects as go
 import pandas as pd
 import calendar
 from datetime import date, datetime, timedelta
-from supabase import Client
-from services.supabase_client import supabase
+from supabase import create_client, Client
 from market import get_cotacoes
-from export import gerar_excel, gerar_pdf
+from export import gerar_excel
 from styles.main_css import apply_styles
-from utils.constants import ICONES, CATS, CORES, CORES_MAP, COR_LABEL
-from utils.formatters import fmt, fmt_compact, plotly_cfg, MESES_BR
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -20,8 +17,43 @@ st.set_page_config(
 )
 apply_styles()
 
-# ── Supabase via services/supabase_client.py ─────────────────────────────────
+# ── Supabase ──────────────────────────────────────────────────────────────────
+@st.cache_resource
+def get_supabase() -> Client:
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"])
 
+supabase = get_supabase()
+
+# ── Constantes ────────────────────────────────────────────────────────────────
+ICONES = ["💼","🏠","🛒","🚗","📺","💊","🎓","✈️","💡","🍕","🎮","👗","🏋️","📱","🎵","🏦","💳","🎯","🐶","💈"]
+CATS   = ["Moradia","Alimentação","Transporte","Saúde","Lazer","Educação","Viagem","Salário","Outros"]
+CORES  = ["#7c3aed","#2563eb","#16a34a","#ca8a04","#dc2626","#0891b2","#db2777","#ea580c","#65a30d"]
+CORES_MAP = dict(zip(CATS, CORES))
+COR_LABEL = {
+    "#7c3aed":"🟣 Roxo","#2563eb":"🔵 Azul","#16a34a":"🟢 Verde",
+    "#ca8a04":"🟡 Âmbar","#dc2626":"🔴 Vermelho","#0891b2":"🩵 Ciano",
+    "#db2777":"🩷 Rosa","#ea580c":"🟠 Laranja","#65a30d":"🍏 Lima",
+}
+MESES_BR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def fmt(v):
+    return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+
+def fmt_compact(v):
+    """Formata valor de forma compacta para KPIs grandes"""
+    if v >= 1_000_000:
+        return f"R$ {v/1_000_000:.1f}M"
+    elif v >= 1_000:
+        return f"R$ {v/1_000:.1f}K"
+    return f"R$ {v:,.0f}".replace(",",".")
+
+def plotly_cfg():
+    return dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Space Grotesk", color="rgba(255,255,255,0.65)", size=11),
+        margin=dict(l=10,r=10,t=10,b=10),
+    )
 
 def uid():
     return st.session_state.get("user_id","")
@@ -35,26 +67,7 @@ def primeiro_nome():
         return e.split("@")[0].split(".")[0].split("_")[0].capitalize()
     return "Usuário"
 
-def confirm_delete(key: str) -> bool:
-    """Botão de exclusão em dois cliques. Primeiro clique pede confirmação, segundo executa."""
-    pending_key = f"_confirm_del_{key}"
-    if st.session_state.get(pending_key):
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅", key=f"yes_{key}", help="Confirmar", use_container_width=True):
-                st.session_state.pop(pending_key, None)
-                return True
-        with c2:
-            if st.button("❌", key=f"no_{key}", help="Cancelar", use_container_width=True):
-                st.session_state.pop(pending_key, None)
-                st.rerun()
-        return False
-    if st.button("🗑️", key=f"del_{key}"):
-        st.session_state[pending_key] = True
-        st.rerun()
-    return False
-
-# ── Cache helpers ─────────────────────────────────────────────────────────────
+# ── Cache helpers (TTL de 60s para evitar excesso de queries) ─────────────────
 @st.cache_data(ttl=60)
 def cached_lancamentos_historico(_uid):
     return supabase.table("lancamentos").select("data,valor,tipo,categoria").eq("user_id",_uid).execute().data or []
@@ -65,82 +78,26 @@ def cached_lancamentos(_uid, mes=None, ano=None):
     if mes and ano:
         ultimo_dia = calendar.monthrange(ano, mes)[1]
         q = q.gte("data", f"{ano}-{mes:02d}-01").lte("data", f"{ano}-{mes:02d}-{ultimo_dia:02d}")
-    else:
-        # Sem filtro: limita aos últimos 12 meses para evitar full scan
-        from datetime import date
-        hoje = date.today()
-        ano_12 = hoje.year - 1 if hoje.month == 12 else hoje.year - (1 if hoje.month < 12 else 0)
-        mes_12 = (hoje.month % 12) + 1 if hoje.month == 12 else hoje.month
-        corte  = f"{hoje.year - 1}-{hoje.month:02d}-01"
-        q = q.gte("data", corte)
     return q.order("data", desc=True).execute().data or []
-
-@st.cache_data(ttl=300)
-def cached_lancamentos_todos(_uid):
-    """Todos os lançamentos sem limite — usado apenas para exportação."""
-    return supabase.table("lancamentos").select("*").eq("user_id", _uid)        .order("data", desc=True).execute().data or []
-
-@st.cache_data(ttl=120)
-def cached_investimentos(_uid):
-    return supabase.table("investimentos").select("*").eq("user_id",_uid).execute().data or []
-
-@st.cache_data(ttl=120)
-def cached_metas(_uid):
-    return supabase.table("metas").select("*").eq("user_id",_uid).execute().data or []
-
-@st.cache_data(ttl=120)
-def cached_orcamentos(_uid):
-    return supabase.table("orcamentos").select("*").eq("user_id",_uid).execute().data or []
-
-@st.cache_data(ttl=120)
-def cached_recorrentes(_uid):
-    return supabase.table("recorrentes").select("*").eq("user_id",_uid).execute().data or []
 
 def invalidar_cache():
     cached_lancamentos.clear()
     cached_lancamentos_historico.clear()
 
-def invalidar_cache_secundario():
-    cached_investimentos.clear()
-    cached_metas.clear()
-    cached_orcamentos.clear()
-    cached_recorrentes.clear()
-
 # ── DB: Lançamentos ───────────────────────────────────────────────────────────
 def db_lancamentos(mes=None, ano=None):
     return cached_lancamentos(uid(), mes, ano)
 
-def db_lancamentos_todos():
-    """Retorna todos os lançamentos sem limite de período — para exportação."""
-    return cached_lancamentos_todos(uid())
-
 def db_add_lancamento(nome, cat, val, tipo, icone, dt, recorrente=False):
-    user = uid()
-    if not user:
-        st.error("Sessão expirada. Faça login novamente.")
-        st.session_state["logado"] = False
-        st.rerun()
-        return
-    try:
-        supabase.table("lancamentos").insert({
-            "user_id": user, "nome": nome, "categoria": cat,
-            "valor": float(val), "tipo": tipo, "icone": icone,
-            "data": str(dt), "recorrente": recorrente,
-        }).execute()
-        invalidar_cache()
-    except Exception as e:
-        st.error(f"Erro ao salvar: {e}")
-        raise
+    supabase.table("lancamentos").insert({
+        "user_id":uid(),"nome":nome,"categoria":cat,
+        "valor":val,"tipo":tipo,"icone":icone,
+        "data":str(dt),"recorrente":recorrente,
+    }).execute()
+    invalidar_cache()
 
 def db_del_lancamento(rid):
     supabase.table("lancamentos").delete().eq("id",rid).execute()
-    invalidar_cache()
-
-def db_update_lancamento(rid, nome, cat, val, tipo, icone, dt):
-    supabase.table("lancamentos").update({
-        "nome":nome,"categoria":cat,"valor":val,
-        "tipo":tipo,"icone":icone,"data":str(dt),
-    }).eq("id",rid).execute()
     invalidar_cache()
 
 def db_lancamentos_historico():
@@ -148,40 +105,35 @@ def db_lancamentos_historico():
 
 # ── DB: Investimentos ─────────────────────────────────────────────────────────
 def db_investimentos():
-    return cached_investimentos(uid())
+    return supabase.table("investimentos").select("*").eq("user_id",uid()).execute().data or []
 
 def db_add_investimento(nome, val, chg, cor):
     supabase.table("investimentos").insert({
         "user_id":uid(),"nome":nome,"valor":val,"variacao":chg,"cor":cor
     }).execute()
-    invalidar_cache_secundario()
 
 def db_del_investimento(rid):
     supabase.table("investimentos").delete().eq("id",rid).execute()
-    invalidar_cache_secundario()
 
 # ── DB: Metas ─────────────────────────────────────────────────────────────────
 def db_metas():
-    return cached_metas(uid())
+    return supabase.table("metas").select("*").eq("user_id",uid()).execute().data or []
 
 def db_add_meta(nome, atual, total, cor, prazo=None):
     payload = {"user_id":uid(),"nome":nome,"atual":atual,"total":total,"cor":cor}
     if prazo:
         payload["prazo"] = str(prazo)
     supabase.table("metas").insert(payload).execute()
-    invalidar_cache_secundario()
 
 def db_update_meta(rid, atual):
     supabase.table("metas").update({"atual":atual}).eq("id",rid).execute()
-    invalidar_cache_secundario()
 
 def db_del_meta(rid):
     supabase.table("metas").delete().eq("id",rid).execute()
-    invalidar_cache_secundario()
 
 # ── DB: Orçamento ─────────────────────────────────────────────────────────────
 def db_orcamentos():
-    return cached_orcamentos(uid())
+    return supabase.table("orcamentos").select("*").eq("user_id",uid()).execute().data or []
 
 def db_upsert_orcamento(cat, limite):
     existing = supabase.table("orcamentos").select("id").eq("user_id",uid()).eq("categoria",cat).execute().data
@@ -189,45 +141,38 @@ def db_upsert_orcamento(cat, limite):
         supabase.table("orcamentos").update({"limite":limite}).eq("id",existing[0]["id"]).execute()
     else:
         supabase.table("orcamentos").insert({"user_id":uid(),"categoria":cat,"limite":limite}).execute()
-    invalidar_cache_secundario()
 
 def db_del_orcamento(rid):
     supabase.table("orcamentos").delete().eq("id",rid).execute()
-    invalidar_cache_secundario()
 
 # ── DB: Recorrentes ───────────────────────────────────────────────────────────
 def db_recorrentes():
-    return cached_recorrentes(uid())
+    return supabase.table("recorrentes").select("*").eq("user_id",uid()).execute().data or []
 
 def db_add_recorrente(nome, cat, val, icone, dia):
     supabase.table("recorrentes").insert({
         "user_id":uid(),"nome":nome,"categoria":cat,
         "valor":val,"icone":icone,"dia_do_mes":dia,
     }).execute()
-    invalidar_cache_secundario()
 
 def db_del_recorrente(rid):
     supabase.table("recorrentes").delete().eq("id",rid).execute()
-    invalidar_cache_secundario()
 
 def processar_recorrentes():
     hoje = date.today()
     recorrentes = db_recorrentes()
     if not recorrentes:
         return 0
-    lanc_mes = supabase.table("lancamentos").select("nome,categoria,data")\
+    lanc_mes = supabase.table("lancamentos").select("nome,recorrente,data")\
         .eq("user_id",uid()).eq("recorrente",True)\
         .gte("data",f"{hoje.year}-{hoje.month:02d}-01")\
-        .lte("data",f"{hoje.year}-{hoje.month:02d}-28")\
+        .lte("data",f"{hoje.year}-{hoje.month:02d}-31")\
         .execute().data or []
-    ja_inseridos = {(l["nome"], l["categoria"]) for l in lanc_mes}
+    nomes_ja_inseridos = {l["nome"] for l in lanc_mes}
     inseridos = 0
     for r in recorrentes:
-        dia = min(r["dia_do_mes"], 28)
-        # Só insere se o dia de vencimento já chegou no mês atual
-        if dia > hoje.day:
-            continue
-        if (r["nome"], r["categoria"]) not in ja_inseridos:
+        if r["nome"] not in nomes_ja_inseridos:
+            dia = min(r["dia_do_mes"], 28)
             dt_lanc = date(hoje.year, hoje.month, dia)
             db_add_lancamento(r["nome"], r["categoria"], r["valor"], "saida", r["icone"], dt_lanc, recorrente=True)
             inseridos += 1
@@ -308,25 +253,117 @@ def gerar_insight_ia(entradas, saidas, cats_saida, orcs, hist_data, mes_sel, ano
 # ══════════════════════════════════════════════════════════════════════════════
 def tela_login():
     st.markdown("""
-    <div style="text-align:center;margin-top:52px;margin-bottom:44px;position:relative;z-index:10">
-      <div style="font-size:46px;font-weight:900;letter-spacing:-2px;line-height:1;
-                  background:linear-gradient(135deg,#fff 20%,#a78bfa 55%,#60a5fa 90%);
-                  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-                  filter:drop-shadow(0 0 30px rgba(124,58,237,0.5));margin-bottom:12px">
-        Finance PRO
-      </div>
-      <div style="font-size:15px;color:rgba(255,255,255,0.4);letter-spacing:.5px">
-        Plataforma de inteligência financeira de nível institucional
-      </div>
-    </div>
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&display=swap');
+
+    .login-logo-text{
+      font-family:'Syne',sans-serif;font-size:52px;font-weight:900;
+      letter-spacing:-3px;line-height:1;
+      background:linear-gradient(135deg,#ffffff 0%,#c4b5fd 35%,#818cf8 60%,#38bdf8 100%);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+      filter:drop-shadow(0 0 40px rgba(124,58,237,0.7));
+      animation:logoBreath 4s ease-in-out infinite alternate;
+    }
+    @keyframes logoBreath{
+      0%  {filter:drop-shadow(0 0 30px rgba(124,58,237,0.6))}
+      100%{filter:drop-shadow(0 0 60px rgba(124,58,237,0.9)) drop-shadow(0 0 120px rgba(99,102,241,0.5))}
+    }
+    .login-tagline{font-size:13px;color:rgba(255,255,255,0.3);letter-spacing:4px;text-transform:uppercase;margin-top:10px}
+    .login-badge{
+      display:inline-flex;align-items:center;gap:6px;
+      background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);
+      border-radius:20px;padding:4px 14px;font-size:11px;color:rgba(167,139,250,0.8);
+      margin-top:12px;letter-spacing:1px;animation:badgePulse 3s ease-in-out infinite;
+    }
+    @keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(124,58,237,0.2)}50%{box-shadow:0 0 0 6px rgba(124,58,237,0)}}
+    .login-card{
+      position:relative;
+      background:rgba(255,255,255,0.018);
+      backdrop-filter:blur(60px) saturate(200%);
+      border:1px solid rgba(255,255,255,0.07);
+      border-radius:32px;padding:44px 40px 36px;
+      box-shadow:0 0 0 1px rgba(124,58,237,0.08) inset,0 40px 100px rgba(0,0,0,0.6),0 0 80px rgba(124,58,237,0.08);
+      overflow:hidden;
+      animation:cardFloat 6s ease-in-out infinite alternate;
+    }
+    @keyframes cardFloat{0%{transform:translateY(0px)}100%{transform:translateY(-8px)}}
+    .login-card::after{
+      content:'';position:absolute;left:0;right:0;height:2px;
+      background:linear-gradient(90deg,transparent,rgba(167,139,250,0.5),rgba(56,189,248,0.3),transparent);
+      animation:scanLine 4s ease-in-out infinite;pointer-events:none;z-index:10;
+      box-shadow:0 0 20px rgba(167,139,250,0.4);
+    }
+    @keyframes scanLine{0%{top:-2px;opacity:0}10%{opacity:1}90%{opacity:1}100%{top:calc(100% + 2px);opacity:0}}
+    .login-corner{position:absolute;width:20px;height:20px;border-color:rgba(124,58,237,0.6);border-style:solid}
+    .login-corner.tl{top:16px;left:16px;border-width:2px 0 0 2px;border-radius:4px 0 0 0}
+    .login-corner.tr{top:16px;right:16px;border-width:2px 2px 0 0;border-radius:0 4px 0 0}
+    .login-corner.bl{bottom:16px;left:16px;border-width:0 0 2px 2px;border-radius:0 0 0 4px}
+    .login-corner.br{bottom:16px;right:16px;border-width:0 2px 2px 0;border-radius:0 0 4px 0}
+    .login-stats{display:flex;gap:10px;margin-bottom:28px}
+    .login-stat{
+      flex:1;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.06);
+      border-radius:14px;padding:10px 12px;text-align:center;transition:all .3s;
+    }
+    .login-stat:hover{background:rgba(124,58,237,0.08);border-color:rgba(124,58,237,0.25);transform:translateY(-2px)}
+    .login-stat-val{font-size:15px;font-weight:800;color:#c4b5fd;letter-spacing:-0.5px}
+    .login-stat-lbl{font-size:9px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:1.5px;margin-top:2px}
+    .login-divider{display:flex;align-items:center;gap:12px;margin:16px 0}
+    .login-divider-line{flex:1;height:1px;background:rgba(255,255,255,0.06)}
+    .login-divider-text{font-size:10px;color:rgba(255,255,255,0.2);letter-spacing:2px}
+    .login-footer{text-align:center;margin-top:20px;font-size:10px;color:rgba(255,255,255,0.15);letter-spacing:1.5px;text-transform:uppercase}
+    .login-security{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:6px;font-size:10px;color:rgba(255,255,255,0.2)}
+    </style>
+    <script>
+    (function(){
+      function bindEnter(){
+        document.querySelectorAll('input[type="password"]').forEach(function(inp){
+          if(inp.dataset.enterBound) return;
+          inp.dataset.enterBound = '1';
+          inp.addEventListener('keydown', function(e){
+            if(e.key !== 'Enter') return;
+            e.preventDefault();
+            var btns = document.querySelectorAll('button');
+            for(var b of btns){
+              var t = b.innerText || '';
+              if(t.includes('Acessar') || t.includes('Entrar') || t.includes('Criar')){b.click();break;}
+            }
+          });
+        });
+      }
+      setTimeout(bindEnter,800);setTimeout(bindEnter,2500);
+      new MutationObserver(function(){setTimeout(bindEnter,300)}).observe(document.body,{childList:true,subtree:true});
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1,1.1,1])
+    st.markdown("<div style='text-align:center;margin-top:48px;margin-bottom:36px;position:relative;z-index:10'>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class='login-logo-text'>Finance PRO</div>
+    <div class='login-tagline'>Inteligência Financeira Institucional</div>
+    <div class='login-badge'>
+      <span style='width:6px;height:6px;border-radius:50%;background:#4ade80;display:inline-block'></span>
+      Sistema ativo e seguro
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    _, col, _ = st.columns([1, 1.15, 1])
     with col:
-        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True,
+        st.markdown("""
+        <div class='login-card'>
+          <div class='login-corner tl'></div><div class='login-corner tr'></div>
+          <div class='login-corner bl'></div><div class='login-corner br'></div>
+          <div class='login-stats'>
+            <div class='login-stat'><div class='login-stat-val'>256-bit</div><div class='login-stat-lbl'>Criptografia</div></div>
+            <div class='login-stat'><div class='login-stat-val'>RLS</div><div class='login-stat-lbl'>Isolamento</div></div>
+            <div class='login-stat'><div class='login-stat-val'>JWT</div><div class='login-stat-lbl'>Auth Token</div></div>
+          </div>
+        """, unsafe_allow_html=True)
+
+        aba = st.radio("", ["Entrar", "Criar conta"], horizontal=True,
                        label_visibility="collapsed", key="auth_aba")
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="login-divider"><div class="login-divider-line"></div><div class="login-divider-text">acesso seguro</div><div class="login-divider-line"></div></div>', unsafe_allow_html=True)
+
         email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
         senha = st.text_input("Senha", type="password", placeholder="••••••••", key="auth_senha")
         nome = ""
@@ -335,7 +372,7 @@ def tela_login():
         st.markdown("<br>", unsafe_allow_html=True)
 
         if aba == "Entrar":
-            if st.button("🔐 Entrar na plataforma", use_container_width=True, key="btn_login"):
+            if st.button("⚡ Acessar plataforma", use_container_width=True, key="btn_login"):
                 if not email.strip() or not senha:
                     st.error("Preencha e-mail e senha.")
                 else:
@@ -382,7 +419,14 @@ def tela_login():
                             st.error("E-mail já cadastrado. Use Entrar.")
                         else:
                             st.error(f"Erro: {e}")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class='login-footer'>
+          Finance PRO &nbsp;·&nbsp; Todos os dados protegidos
+          <div class='login-security'>🔒 Conexão criptografada &nbsp;·&nbsp; 🛡️ Supabase Auth</div>
+        </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
 if "logado" not in st.session_state:
@@ -391,40 +435,14 @@ if not st.session_state["logado"]:
     tela_login()
     st.stop()
 
-# ── Restaurar sessão auth no cliente Supabase ────────────────────────────────
-if st.session_state.get("access_token"):
-    try:
-        supabase.auth.set_session(
-            st.session_state["access_token"],
-            st.session_state["refresh_token"]
-        )
-    except Exception:
-        pass
-
-# ── Processar recorrentes + boas-vindas (1x por sessão) ──────────────────────
+# ── Processar recorrentes (1x por sessão) ─────────────────────────────────────
 if "recorrentes_processados" not in st.session_state:
     try:
         n = processar_recorrentes()
-    except Exception:
-        n = 0
-
-    # Resumo rápido para o toast de boas-vindas
-    try:
-        hoje_bv   = date.today()
-        txs_bv    = db_lancamentos(mes=hoje_bv.month, ano=hoje_bv.year)
-        saldo_bv  = sum(t["valor"] if t["tipo"]=="entrada" else -t["valor"] for t in txs_bv)
-        metas_bv  = db_metas()
-        n_metas   = len(metas_bv)
-        cor_saldo = "🟢" if saldo_bv >= 0 else "🔴"
-        resumo    = f"{cor_saldo} Saldo do mês: {fmt(saldo_bv)}"
-        if n_metas > 0:
-            resumo += f" · 🎯 {n_metas} meta{'s' if n_metas > 1 else ''} ativa{'s' if n_metas > 1 else ''}"
         if n > 0:
-            resumo += f" · 🔄 {n} recorrente{'s' if n > 1 else ''} lançado{'s' if n > 1 else ''}"
-        st.toast(f"Olá, {primeiro_nome()}! {resumo}", icon="👋")
+            st.toast(f"✅ {n} lançamento(s) recorrente(s) inserido(s) automaticamente!", icon="🔄")
     except Exception:
-        st.toast(f"Bem-vindo(a) de volta, {primeiro_nome()}! 👋")
-
+        pass
     st.session_state["recorrentes_processados"] = True
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -485,10 +503,6 @@ with tab_dash:
     with col_f2:
         ano_sel = st.selectbox("Ano", list(range(hoje.year-3, hoje.year+1)), index=3, key="dash_ano")
 
-    # Sincroniza contexto de mês/ano para outras abas
-    st.session_state["ctx_mes"] = mes_sel
-    st.session_state["ctx_ano"] = ano_sel
-
     txs   = db_lancamentos(mes=mes_sel, ano=ano_sel)
     invs  = db_investimentos()
     metas = db_metas()
@@ -498,46 +512,22 @@ with tab_dash:
     entradas   = sum(t["valor"] for t in txs if t["tipo"]=="entrada")
     saidas     = sum(t["valor"] for t in txs if t["tipo"]=="saida")
     saldo      = entradas - saidas
-
-    # Considera apenas investimentos cadastrados até o último dia do período selecionado
-    ultimo_dia_sel = calendar.monthrange(ano_sel, mes_sel)[1]
-    corte = f"{ano_sel}-{mes_sel:02d}-{ultimo_dia_sel:02d}"
-    invs_periodo = [i for i in invs if str(i.get("criado_em", ""))[:10] <= corte]
-    invest     = sum(i["valor"] for i in invs_periodo)
+    invest     = sum(i["valor"] for i in invs)
     patrimonio = saldo + invest
 
     # Taxa de poupança
     taxa_poupar = round(saldo / entradas * 100) if entradas > 0 else 0
 
-    # ── Comparativo mês anterior ─────────────────────────────────────────────
-    mes_ant = mes_sel - 1 if mes_sel > 1 else 12
-    ano_ant = ano_sel if mes_sel > 1 else ano_sel - 1
-    txs_ant = db_lancamentos(mes=mes_ant, ano=ano_ant)
-    ent_ant = sum(t["valor"] for t in txs_ant if t["tipo"]=="entrada")
-    sai_ant = sum(t["valor"] for t in txs_ant if t["tipo"]=="saida")
-    sal_ant = ent_ant - sai_ant
-
-    def variacao_vs(atual, anterior):
-        if anterior == 0:
-            return "", True
-        pct = ((atual - anterior) / anterior) * 100
-        sinal = "+" if pct >= 0 else ""
-        return f"{sinal}{pct:.1f}% vs mês ant.", pct >= 0
-
-    delta_ent, up_ent = variacao_vs(entradas, ent_ant)
-    delta_sai, up_sai = variacao_vs(saidas, sai_ant)
-    delta_sal, up_sal = variacao_vs(saldo, sal_ant)
-
     # KPIs — 6 cards em 2 linhas de 3
     kpis_row1 = [
-        ("💰","RECEITA",       fmt(entradas),    delta_ent or "Total recebido",     up_ent,          "kpi-purple","#7c3aed"),
-        ("💸","DESPESAS",      fmt(saidas),      delta_sai or "Total gasto",        not up_sai,      "kpi-blue",  "#2563eb"),
-        ("⚖️","SALDO",         fmt(saldo),       delta_sal or "Caixa disponível",   saldo>=0,        "kpi-green", "#16a34a"),
+        ("💰","RECEITA",       fmt(entradas),   "Total recebido",       True,       "kpi-purple","#7c3aed"),
+        ("💸","DESPESAS",      fmt(saidas),     "Total gasto",          saidas==0,  "kpi-blue",  "#2563eb"),
+        ("⚖️","SALDO",         fmt(saldo),      "Caixa disponível",     saldo>=0,   "kpi-green", "#16a34a"),
     ]
     kpis_row2 = [
-        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",            taxa_poupar>=20, "kpi-teal",  "#0891b2"),
-        ("📊","INVESTIMENTOS", fmt(invest),       "Total aplicado",                 True,            "kpi-amber", "#d97706"),
-        ("🏛️","PATRIMÔNIO",   fmt(patrimonio),   "Patrimônio total",               True,            "kpi-rose",  "#e11d48"),
+        ("🪙","POUPANÇA",      f"{taxa_poupar}%", "Da receita guardada",  taxa_poupar>=20, "kpi-teal",  "#0891b2"),
+        ("📊","INVESTIMENTOS", fmt(invest),     "Total aplicado",       True,       "kpi-amber", "#d97706"),
+        ("🏛️","PATRIMÔNIO",   fmt(patrimonio), "Patrimônio total",     True,       "kpi-rose",  "#e11d48"),
     ]
 
     for row in [kpis_row1, kpis_row2]:
@@ -553,67 +543,6 @@ with tab_dash:
               <div class="kpi-delta {dc}">{"▲" if up else "▼"} {delta}</div>
             </div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-
-
-    # ── Projeção do mês atual ─────────────────────────────────────────────────
-    if mes_sel == hoje.month and ano_sel == hoje.year and hoje.day > 1:
-        dias_passados   = hoje.day - 1
-        dias_no_mes     = calendar.monthrange(hoje.year, hoje.month)[1]
-        dias_restantes  = dias_no_mes - hoje.day + 1
-        media_diaria    = saidas / dias_passados if dias_passados > 0 else 0
-        proj_saidas     = saidas + (media_diaria * dias_restantes)
-        proj_saldo      = entradas - proj_saidas
-        no_azul         = proj_saldo >= 0
-        cor_proj        = "#16a34a" if no_azul else "#dc2626"
-        icone_proj      = "✅" if no_azul else "⚠️"
-        label_proj      = "No azul até o fim do mês" if no_azul else "Atenção: projeção negativa"
-
-        st.markdown(f"""
-        <div class="panel" style="border-left:3px solid {cor_proj};margin-bottom:8px">
-          <div class="panel-title">📈 Projeção — Fim de {MESES_BR[mes_sel-1]}/{ano_sel}</div>
-          <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:center;padding:4px 0">
-            <div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">GASTO MÉDIO/DIA</div>
-              <div style="font-size:18px;font-weight:700;color:#e2e8f0">{fmt(media_diaria)}</div>
-            </div>
-            <div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">PROJEÇÃO DE GASTOS</div>
-              <div style="font-size:18px;font-weight:700;color:#f87171">{fmt(proj_saidas)}</div>
-            </div>
-            <div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px">SALDO PROJETADO</div>
-              <div style="font-size:18px;font-weight:700;color:{cor_proj}">{fmt(proj_saldo)}</div>
-            </div>
-            <div style="margin-left:auto;text-align:right">
-              <div style="font-size:13px;font-weight:600;color:{cor_proj}">{icone_proj} {label_proj}</div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.38);margin-top:4px">{dias_passados} dias computados · {dias_restantes} restantes</div>
-            </div>
-          </div>
-        </div>""", unsafe_allow_html=True)
-
-    # ── Resumo anual ──────────────────────────────────────────────────────────
-    if hist:
-        df_ano = pd.DataFrame(hist)
-        df_ano = df_ano[pd.to_datetime(df_ano["data"]).dt.year == ano_sel]
-        ent_ano = df_ano[df_ano["tipo"]=="entrada"]["valor"].sum() if len(df_ano) else 0
-        sai_ano = df_ano[df_ano["tipo"]=="saida"]["valor"].sum() if len(df_ano) else 0
-        sal_ano = ent_ano - sai_ano
-        eco_pct = round(sal_ano / ent_ano * 100) if ent_ano > 0 else 0
-        cor_ano = "#4ade80" if sal_ano >= 0 else "#f87171"
-        st.markdown(f"""
-        <div class="panel" style="margin-bottom:8px">
-          <div class="panel-title">📆 Resumo {ano_sel}</div>
-          <div style="display:flex;gap:32px;flex-wrap:wrap;padding:4px 0">
-            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">RECEITA ANUAL</div>
-              <div style="font-size:18px;font-weight:700;color:#4ade80">{fmt(ent_ano)}</div></div>
-            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">GASTOS ANUAIS</div>
-              <div style="font-size:18px;font-weight:700;color:#f87171">{fmt(sai_ano)}</div></div>
-            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">SALDO ACUMULADO</div>
-              <div style="font-size:18px;font-weight:700;color:{cor_ano}">{fmt(sal_ano)}</div></div>
-            <div><div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px">TAXA DE POUPANÇA</div>
-              <div style="font-size:18px;font-weight:700;color:{cor_ano}">{eco_pct}%</div></div>
-          </div>
-        </div>""", unsafe_allow_html=True)
 
     # ── Gráfico Histórico ─────────────────────────────────────────────────────
     st.markdown('<div class="panel"><div class="panel-title">📅 Histórico Mensal — Entradas vs Saídas</div>', unsafe_allow_html=True)
@@ -660,33 +589,6 @@ with tab_dash:
             hovermode="x unified",
         )
         st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar":False})
-
-        # Evolução do saldo acumulado
-        saldo_acum = []
-        acum = 0
-        for e, s in zip(ents, sais):
-            acum += (e - s)
-            saldo_acum.append(acum)
-        cores_pts = ["#4ade80" if v >= 0 else "#f87171" for v in saldo_acum]
-        fig_acum = go.Figure()
-        fig_acum.add_trace(go.Scatter(
-            x=meses_todos, y=saldo_acum,
-            mode="lines+markers",
-            line=dict(color="#a78bfa", width=2),
-            marker=dict(size=7, color=cores_pts, line=dict(color="#a78bfa", width=1)),
-            fill="tozeroy", fillcolor="rgba(167,139,250,0.08)",
-            hovertemplate="<b>%{x}</b><br>Acumulado: R$ %{y:,.2f}<extra></extra>",
-        ))
-        cfg_acum = plotly_cfg()
-        cfg_acum.update(dict(
-            height=140, showlegend=False, margin=dict(l=10,r=10,t=4,b=10),
-            yaxis=dict(gridcolor="rgba(255,255,255,0.05)", tickfont=dict(size=9, color="rgba(255,255,255,0.3)"),
-                       zeroline=True, zerolinecolor="rgba(255,255,255,0.15)", zerolinewidth=1),
-            xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=10, color="rgba(255,255,255,0.35)")),
-        ))
-        fig_acum.update_layout(**cfg_acum)
-        st.markdown('<div style="font-size:11px;color:rgba(255,255,255,0.35);margin:8px 0 2px 0">📈 Saldo acumulado</div>', unsafe_allow_html=True)
-        st.plotly_chart(fig_acum, use_container_width=True, config={"displayModeBar":False})
     else:
         st.info("Adicione lançamentos para ver o histórico mensal.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -788,32 +690,18 @@ with tab_dash:
                         prazo_info = ' · <span style="color:#f87171">Vencida</span>'
                 except:
                     pass
-            # Ritmo necessário para atingir a meta no prazo
-            ritmo_info = ""
-            if m.get("prazo") and pct < 100:
-                try:
-                    prazo_dt2  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
-                    dias_rest2 = (prazo_dt2 - date.today()).days
-                    if dias_rest2 > 0:
-                        faltam     = m["total"] - m["atual"]
-                        meses_rest = max(dias_rest2 / 30, 1)
-                        por_mes    = faltam / meses_rest
-                        ritmo_info = f'<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:2px">💡 Guardar {fmt(por_mes)}/mês para chegar lá</div>'
-                except:
-                    pass
             st.markdown(f"""
             <div style="margin-bottom:16px">
               <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
-                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m["nome"]}{prazo_info}</span>
-                <span style="color:{m["cor"]};font-weight:700">{pct}%</span>
+                <span style="font-weight:500;color:rgba(255,255,255,0.8)">{m['nome']}{prazo_info}</span>
+                <span style="color:{m['cor']};font-weight:700">{pct}%</span>
               </div>
               <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m["cor"]},{m["cor"]}99)"></div>
+                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}99)"></div>
               </div>
               <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>{fmt(m["atual"])}</span><span>{fmt(m["total"])}</span>
+                <span>{fmt(m['atual'])}</span><span>{fmt(m['total'])}</span>
               </div>
-              {ritmo_info}
             </div>""", unsafe_allow_html=True)
         if not metas:
             st.info("Nenhuma meta cadastrada.")
@@ -832,7 +720,7 @@ with tab_dash:
     st.markdown('<div class="panel"><div class="panel-title">📥 Exportar Relatório</div>', unsafe_allow_html=True)
     col_ex1, col_ex2, col_ex3 = st.columns(3)
     with col_ex1:
-        todos_lanc = db_lancamentos_todos()
+        todos_lanc = db_lancamentos()
         xlsx_bytes = gerar_excel(todos_lanc, db_investimentos(), db_metas())
         mes_nome = MESES_BR[hoje.month-1]
         st.download_button(
@@ -856,23 +744,8 @@ with tab_dash:
         else:
             st.info("Sem lançamentos para exportar.")
     with col_ex3:
-        try:
-            pdf_bytes = gerar_pdf(
-                todos_lanc, db_investimentos(), db_metas(),
-                nome_usuario=primeiro_nome(),
-                mes=mes_sel, ano=ano_sel,
-            )
-            st.download_button(
-                label="📑 Baixar PDF",
-                data=pdf_bytes,
-                file_name=f"finance_pro_{hoje.year}_{mes_nome}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        except ImportError:
-            st.caption("PDF: adicione fpdf2 ao requirements.txt")
         st.markdown(f"""
-        <div style="text-align:center;padding:4px;font-size:11px;color:rgba(255,255,255,0.3)">
+        <div style="text-align:center;padding:8px;font-size:12px;color:rgba(255,255,255,0.4)">
           {len(todos_lanc)} lançamentos · {len(db_investimentos())} ativos · {len(db_metas())} metas
         </div>""", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -897,27 +770,12 @@ with tab_lanc:
         data_l = st.date_input("Data", value=date.today(), key="f_data")
 
         if st.button("✅ Adicionar lançamento", use_container_width=True, key="btn_add_tx"):
-            if not nome.strip():
-                st.error("⚠️ Digite uma descrição para o lançamento.")
-            elif valor <= 0:
-                st.error("⚠️ O valor precisa ser maior que zero.")
-            else:
+            if nome.strip():
                 db_add_lancamento(nome.strip(), cat, valor, tipo, icon, data_l)
-                st.toast(f"✅ '{nome}' adicionado!", icon="💾")
-                if tipo == "saida":
-                    orcs_check = db_orcamentos()
-                    orc_cat    = next((o for o in orcs_check if o["categoria"] == cat), None)
-                    if orc_cat:
-                        hoje_c    = date.today()
-                        txs_check = db_lancamentos(mes=hoje_c.month, ano=hoje_c.year)
-                        gasto_cat = sum(t["valor"] for t in txs_check if t["tipo"]=="saida" and t["categoria"]==cat)
-                        limite    = orc_cat["limite"]
-                        pct_uso   = gasto_cat / limite * 100 if limite > 0 else 0
-                        if pct_uso >= 100:
-                            st.error(f"🚨 Orçamento de **{cat}** estourado! Gasto: {fmt(gasto_cat)} / Limite: {fmt(limite)}")
-                        elif pct_uso >= 80:
-                            st.warning(f"⚠️ Orçamento de **{cat}** em {pct_uso:.0f}%! Restam apenas {fmt(limite - gasto_cat)}")
+                st.success(f"✅ '{nome}' salvo!")
                 st.rerun()
+            else:
+                st.error("Digite uma descrição.")
         st.markdown("</div>", unsafe_allow_html=True)
 
         # ── Mini resumo rápido ─────────────────────────────────────────────
@@ -952,19 +810,10 @@ with tab_lanc:
         fc1,fc2,fc3 = st.columns(3)
         with fc1: filtro_tipo = st.selectbox("Tipo", ["Todos","Entradas","Saídas"], key="filtro_tipo")
         with fc2: filtro_cat  = st.selectbox("Categoria", ["Todas"]+CATS, key="filtro_cat")
-        with fc3:
-            ctx_mes = st.session_state.get("ctx_mes")
-            default_mes = MESES_BR[ctx_mes - 1] if ctx_mes else "Todos"
-            filtro_mes = st.selectbox("Mês", ["Todos"]+MESES_BR,
-                                      index=(["Todos"]+MESES_BR).index(default_mes),
-                                      key="filtro_mes_lanc")
+        with fc3: filtro_mes  = st.selectbox("Mês", ["Todos"]+MESES_BR, key="filtro_mes_lanc")
 
-        # Busca + ordenação
-        fb1, fb2 = st.columns([2, 1])
-        with fb1:
-            busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
-        with fb2:
-            ordenacao = st.selectbox("Ordenar por", ["Data ↓", "Data ↑", "Maior valor", "Menor valor"], key="ordem_lanc")
+        # Busca textual
+        busca = st.text_input("🔍 Buscar por descrição...", placeholder="Ex: mercado, uber, salário...", key="busca_tx")
 
         txs_all = db_lancamentos()
         if filtro_tipo == "Entradas":  txs_all = [t for t in txs_all if t["tipo"]=="entrada"]
@@ -976,16 +825,7 @@ with tab_lanc:
         if busca.strip():
             txs_all = [t for t in txs_all if busca.lower() in t["nome"].lower()]
 
-        # Ordenação
-        if ordenacao == "Data ↓":
-            txs_all = sorted(txs_all, key=lambda t: str(t["data"]), reverse=True)
-        elif ordenacao == "Data ↑":
-            txs_all = sorted(txs_all, key=lambda t: str(t["data"]))
-        elif ordenacao == "Maior valor":
-            txs_all = sorted(txs_all, key=lambda t: t["valor"], reverse=True)
-        elif ordenacao == "Menor valor":
-            txs_all = sorted(txs_all, key=lambda t: t["valor"])
-
+        total_filtrado   = sum(t["valor"] for t in txs_all)
         total_entradas_f = sum(t["valor"] for t in txs_all if t["tipo"]=="entrada")
         total_saidas_f   = sum(t["valor"] for t in txs_all if t["tipo"]=="saida")
 
@@ -999,29 +839,13 @@ with tab_lanc:
 
         if not txs_all:
             st.info("Nenhum lançamento encontrado.")
-        else:
-            # ── Paginação ─────────────────────────────────────────────────────
-            POR_PAGINA = 20
-            total_pags = max(1, -(-len(txs_all) // POR_PAGINA))  # ceil division
 
-            # Reseta página se filtros mudaram
-            filtro_hash = f"{filtro_tipo}{filtro_cat}{filtro_mes}{busca}{ordenacao}"
-            if st.session_state.get("_lanc_filtro_hash") != filtro_hash:
-                st.session_state["_lanc_filtro_hash"] = filtro_hash
-                st.session_state["_lanc_pagina"] = 1
-
-            pag_atual = st.session_state.get("_lanc_pagina", 1)
-            inicio    = (pag_atual - 1) * POR_PAGINA
-            txs_pag   = txs_all[inicio:inicio + POR_PAGINA]
-
-        for t in txs_pag if txs_all else []:
+        for t in txs_all:
             sinal = "+" if t["tipo"]=="entrada" else "-"
             cls   = "tx-pos" if t["tipo"]=="entrada" else "tx-neg"
             borda = "#16a34a33" if t["tipo"]=="entrada" else "#dc262633"
             rec_badge = ' 🔄' if t.get("recorrente") else ""
-            edit_key = f"_edit_{t['id']}"
-
-            ci, ce, cd = st.columns([6, 1, 1])
+            ci,cd = st.columns([6,1])
             with ci:
                 st.markdown(f"""
                 <div class="tx-row" style="border-left:3px solid {borda}">
@@ -1032,73 +856,12 @@ with tab_lanc:
                   </div>
                   <div class="{cls}">{sinal}{fmt(t['valor'])}</div>
                 </div>""", unsafe_allow_html=True)
-            with ce:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("✏️", key=f"edit_btn_{t['id']}", help="Editar"):
-                    st.session_state[edit_key] = not st.session_state.get(edit_key, False)
-                    st.rerun()
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if confirm_delete(f"tx_{t['id']}"):
+                if st.button("🗑️", key=f"del_tx_{t['id']}"):
                     db_del_lancamento(t["id"])
-                    st.toast("Lançamento removido.", icon="✅")
+                    st.toast("🗑️ Lançamento removido.", icon="✅")
                     st.rerun()
-
-            # Formulário inline de edição
-            if st.session_state.get(edit_key):
-                with st.container():
-                    st.markdown('<div class="form-box" style="margin:4px 0 12px 0;padding:12px">', unsafe_allow_html=True)
-                    ea, eb = st.columns(2)
-                    with ea:
-                        e_tipo = st.selectbox("Tipo", ["saida","entrada"],
-                            index=0 if t["tipo"]=="saida" else 1,
-                            format_func=lambda x:"💸 Saída" if x=="saida" else "💰 Entrada",
-                            key=f"e_tipo_{t['id']}")
-                        e_nome = st.text_input("Descrição", value=t["nome"], key=f"e_nome_{t['id']}")
-                        e_val  = st.number_input("Valor (R$)", value=float(t["valor"]),
-                            min_value=0.01, step=0.01, format="%.2f", key=f"e_val_{t['id']}")
-                    with eb:
-                        cats_op = [c for c in CATS if c!="Salário"] if e_tipo=="saida" else ["Salário","Outros"]
-                        cat_idx = cats_op.index(t["categoria"]) if t["categoria"] in cats_op else 0
-                        e_cat  = st.selectbox("Categoria", cats_op, index=cat_idx, key=f"e_cat_{t['id']}")
-                        e_icon = st.selectbox("Ícone", ICONES,
-                            index=ICONES.index(t["icone"]) if t["icone"] in ICONES else 0,
-                            key=f"e_icon_{t['id']}")
-                        e_data = st.date_input("Data",
-                            value=datetime.strptime(str(t["data"])[:10], "%Y-%m-%d").date(),
-                            key=f"e_data_{t['id']}")
-                    s1, s2 = st.columns(2)
-                    with s1:
-                        if st.button("💾 Salvar", key=f"e_save_{t['id']}", use_container_width=True):
-                            db_update_lancamento(t["id"], e_nome.strip(), e_cat, e_val, e_tipo, e_icon, e_data)
-                            st.session_state.pop(edit_key, None)
-                            st.toast("Lançamento atualizado.", icon="✅")
-                            st.rerun()
-                    with s2:
-                        if st.button("✖ Cancelar", key=f"e_cancel_{t['id']}", use_container_width=True):
-                            st.session_state.pop(edit_key, None)
-                            st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-        # ── Navegação de páginas ───────────────────────────────────────────
-        if txs_all and total_pags > 1:
-            st.markdown("<br>", unsafe_allow_html=True)
-            nav1, nav2, nav3 = st.columns([1, 2, 1])
-            with nav1:
-                if pag_atual > 1:
-                    if st.button("← Anterior", key="pag_ant", use_container_width=True):
-                        st.session_state["_lanc_pagina"] = pag_atual - 1
-                        st.rerun()
-            with nav2:
-                st.markdown(f"""
-                <div style="text-align:center;font-size:12px;color:rgba(255,255,255,0.4);padding-top:8px">
-                  Página {pag_atual} de {total_pags} · {len(txs_all)} lançamentos
-                </div>""", unsafe_allow_html=True)
-            with nav3:
-                if pag_atual < total_pags:
-                    if st.button("Próxima →", key="pag_prox", use_container_width=True):
-                        st.session_state["_lanc_pagina"] = pag_atual + 1
-                        st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1111,12 +874,12 @@ with tab_invest:
         st.markdown('<div class="form-box"><div class="form-title">➕ Novo Ativo</div>', unsafe_allow_html=True)
         inv_nome = st.text_input("Nome do ativo", placeholder="Ex: Tesouro Selic 2029", key="inv_nome")
         inv_val  = st.number_input("Valor (R$)", min_value=0.0, step=100.0, format="%.2f", key="inv_val")
-        inv_chg  = st.number_input("Variação (%)", min_value=-100.0, max_value=1000.0, step=0.01, format="%.2f", key="inv_chg", help="Ex: 2.14 para +2.14%, -1.20 para queda")
+        inv_chg  = st.text_input("Variação", placeholder="Ex: +5.2%", key="inv_chg")
         inv_cor  = st.selectbox("Cor", CORES, format_func=lambda c:COR_LABEL.get(c,c), key="inv_cor")
         if st.button("✅ Adicionar ativo", use_container_width=True, key="btn_add_inv"):
             if inv_nome.strip():
-                db_add_investimento(inv_nome.strip(), inv_val, inv_chg, inv_cor)
-                st.toast(f"✅ '{inv_nome}' adicionado!", icon="📊")
+                db_add_investimento(inv_nome.strip(), inv_val, inv_chg or "0%", inv_cor)
+                st.success(f"✅ '{inv_nome}' adicionado!")
                 st.rerun()
             else:
                 st.error("Digite o nome do ativo.")
@@ -1126,16 +889,10 @@ with tab_invest:
         total_port = sum(i["valor"] for i in invs_list)
         st.markdown('<div class="panel"><div class="panel-title">🏦 Seus Ativos</div>', unsafe_allow_html=True)
         if invs_list:
-            var_pond = sum(float(i["variacao"] or 0) * i["valor"] for i in invs_list) / total_port if total_port > 0 else 0
-            var_cor  = "#4ade80" if var_pond >= 0 else "#f87171"
-            var_sinal = "+" if var_pond >= 0 else ""
-            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Total: {fmt(total_port)} · <span style="color:{var_cor};font-weight:600">{var_sinal}{var_pond:.2f}% variação ponderada</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Total: {fmt(total_port)}</div>', unsafe_allow_html=True)
         for inv in invs_list:
             pct       = round(inv["valor"]/total_port*100) if total_port>0 else 0
-            chg_val   = float(inv["variacao"] or 0)
-            chg_color = "#4ade80" if chg_val >= 0 else "#f87171"
-            chg_sinal = "+" if chg_val >= 0 else ""
-            chg_label = f"{chg_sinal}{chg_val:.2f}%"
+            chg_color = "#4ade80" if str(inv["variacao"]).startswith("+") else "#f87171"
             ci,cd     = st.columns([5,1])
             with ci:
                 st.markdown(f"""
@@ -1148,12 +905,12 @@ with tab_invest:
                   </div>
                   <div style="text-align:right;flex-shrink:0">
                     <div style="font-size:13px;font-weight:800">{fmt(inv['valor'])}</div>
-                    <div style="font-size:11px;color:{chg_color};font-weight:700">{chg_label}</div>
+                    <div style="font-size:11px;color:{chg_color};font-weight:700">{inv['variacao']}</div>
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if confirm_delete(f"inv_{inv['id']}"):
+                if st.button("🗑️", key=f"del_inv_{inv['id']}"):
                     db_del_investimento(inv["id"]); st.rerun()
         if not invs_list:
             st.info("Nenhum ativo cadastrado.")
@@ -1227,58 +984,37 @@ with tab_metas:
         metas_list = db_metas()
         if not metas_list:
             st.info("Nenhuma meta cadastrada ainda.")
-        metas_list = sorted(metas_list, key=lambda m: (min(round(m["atual"]/m["total"]*100) if m["total"]>0 else 0, 100) >= 100, 0))
         for m in metas_list:
             pct = min(round(m["atual"]/m["total"]*100), 100) if m["total"]>0 else 0
             falta = m["total"] - m["atual"]
 
-            # Badge de status
-            if pct >= 100:
-                badge = '<span style="font-size:10px;background:#16a34a22;color:#4ade80;border:1px solid #4ade8044;border-radius:20px;padding:2px 8px;margin-left:8px">✅ Concluída</span>'
-            elif m.get("prazo"):
-                try:
-                    prazo_dt  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
-                    dias_rest = (prazo_dt - date.today()).days
-                    if dias_rest < 0:
-                        badge = '<span style="font-size:10px;background:#dc262622;color:#f87171;border:1px solid #f8717144;border-radius:20px;padding:2px 8px;margin-left:8px">🔴 Vencida</span>'
-                    elif dias_rest <= 7:
-                        badge = f'<span style="font-size:10px;background:#ca8a0422;color:#fbbf24;border:1px solid #fbbf2444;border-radius:20px;padding:2px 8px;margin-left:8px">⚠️ {dias_rest}d restantes</span>'
-                    elif dias_rest <= 30:
-                        badge = f'<span style="font-size:10px;background:#ca8a0411;color:#fbbf24;border:1px solid #fbbf2433;border-radius:20px;padding:2px 8px;margin-left:8px">📅 {dias_rest}d restantes</span>'
-                    else:
-                        badge = f'<span style="font-size:10px;color:rgba(255,255,255,0.3);margin-left:8px">📅 {dias_rest}d</span>'
-                except:
-                    badge = ""
-            else:
-                badge = ""
-
             # Prazo e projeção
             prazo_html = ""
-            if m.get("prazo") and pct < 100:
+            if m.get("prazo"):
                 try:
-                    prazo_dt  = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
+                    prazo_dt = datetime.strptime(m["prazo"][:10], "%Y-%m-%d").date()
                     dias_rest = (prazo_dt - date.today()).days
                     if dias_rest > 0 and falta > 0:
                         aporte_diario = falta / dias_rest
-                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">💡 Aporte diário necessário: {fmt(aporte_diario)}</div>'
+                        prazo_html = f'<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:4px">📅 {dias_rest} dias restantes · Aporte diário necessário: {fmt(aporte_diario)}</div>'
                     elif dias_rest <= 0:
-                        prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">Prazo encerrado — atualize ou remova a meta.</div>'
+                        prazo_html = '<div style="font-size:10px;color:#f87171;margin-top:4px">⚠️ Prazo vencido</div>'
                 except:
                     pass
 
             st.markdown(f"""
             <div style="margin-bottom:8px">
-              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px;align-items:center">
-                <span style="color:rgba(255,255,255,0.85)">{m["nome"]}{badge}</span>
-                <span style="color:{m["cor"]};text-shadow:0 0 12px {m["cor"]}88">{pct}%</span>
+              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:2px">
+                <span style="color:rgba(255,255,255,0.85)">{m['nome']}</span>
+                <span style="color:{m['cor']};text-shadow:0 0 12px {m['cor']}88">{pct}%</span>
               </div>
               <div class="goal-track">
-                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m["cor"]},{m["cor"]}88)"></div>
+                <div class="goal-fill" style="width:{pct}%;background:linear-gradient(90deg,{m['cor']},{m['cor']}88)"></div>
               </div>
               <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px">
-                <span>Atual: {fmt(m["atual"])}</span>
+                <span>Atual: {fmt(m['atual'])}</span>
                 <span style="color:rgba(255,255,255,0.45)">Falta: {fmt(max(falta,0))}</span>
-                <span>Meta: {fmt(m["total"])}</span>
+                <span>Meta: {fmt(m['total'])}</span>
               </div>
               {prazo_html}
             </div>""", unsafe_allow_html=True)
@@ -1290,7 +1026,7 @@ with tab_metas:
                     db_update_meta(m["id"], novo_a); st.rerun()
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if confirm_delete(f"meta_{m['id']}"):
+                if st.button("🗑️", key=f"delm_{m['id']}"):
                     db_del_meta(m["id"]); st.rerun()
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1366,7 +1102,7 @@ with tab_orc:
                   </div>
                 </div>""", unsafe_allow_html=True)
             with cd:
-                if confirm_delete(f"orc_{o['id']}"):
+                if st.button("🗑️", key=f"del_orc_{o['id']}"):
                     db_del_orcamento(o["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1404,35 +1140,13 @@ with tab_rec:
         recs = db_recorrentes()
         total_rec = sum(r["valor"] for r in recs)
         total_rec_anual = total_rec * 12
-
         if recs:
-            # % da renda mensal atual
-            hoje_r    = date.today()
-            txs_renda = db_lancamentos(mes=hoje_r.month, ano=hoje_r.year)
-            renda_mes = sum(t["valor"] for t in txs_renda if t["tipo"]=="entrada")
-            pct_renda = round(total_rec / renda_mes * 100) if renda_mes > 0 else 0
-            cor_pct   = "#f87171" if pct_renda >= 50 else ("#fbbf24" if pct_renda >= 30 else "#4ade80")
-            st.markdown(f'''<div style="display:flex;gap:20px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px;flex-wrap:wrap;align-items:center">
+            st.markdown(f"""
+            <div style="display:flex;gap:20px;font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:14px;flex-wrap:wrap">
               <span>{len(recs)} recorrentes</span>
-              <span style="color:#c4b5fd;font-size:13px;font-weight:700">Mensal: {fmt(total_rec)}</span>
+              <span style="color:#c4b5fd">Mensal: {fmt(total_rec)}</span>
               <span style="color:rgba(196,181,253,0.5)">Anual: {fmt(total_rec_anual)}</span>
-              <span style="color:{cor_pct};font-weight:600">{pct_renda}% da renda</span>
-            </div>''', unsafe_allow_html=True)
-
-            # Breakdown por categoria
-            cats_rec = {}
-            for r in recs:
-                cats_rec[r["categoria"]] = cats_rec.get(r["categoria"], 0) + r["valor"]
-            cats_rec_sorted = sorted(cats_rec.items(), key=lambda x: x[1], reverse=True)
-            maior = cats_rec_sorted[0][1] if cats_rec_sorted else 1
-            rows = []
-            for cat, val in cats_rec_sorted:
-                pct_cat = round(val / total_rec * 100) if total_rec > 0 else 0
-                bar_w   = round(val / maior * 100)
-                cor_cat = CORES_MAP.get(cat, "#7c3aed")
-                rows.append(f'<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:rgba(255,255,255,0.6)">{cat}</span><span style="color:{cor_cat};font-weight:600">{fmt(val)} · {pct_cat}%</span></div><div style="background:rgba(255,255,255,0.06);border-radius:4px;height:5px"><div style="width:{bar_w}%;background:{cor_cat};border-radius:4px;height:5px"></div></div></div>')
-            st.markdown('<div style="margin-bottom:14px">' + "".join(rows) + '</div>', unsafe_allow_html=True)
-            st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.07);margin-bottom:12px"></div>', unsafe_allow_html=True)
+            </div>""", unsafe_allow_html=True)
         else:
             st.info("Nenhuma despesa recorrente cadastrada.")
         for r in recs:
@@ -1469,6 +1183,6 @@ with tab_rec:
                 </div>""", unsafe_allow_html=True)
             with rd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if confirm_delete(f"rec_{r['id']}"):
+                if st.button("🗑️", key=f"del_rec_{r['id']}"):
                     db_del_recorrente(r["id"]); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
