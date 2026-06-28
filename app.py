@@ -324,7 +324,7 @@ def tela_login():
     _, col, _ = st.columns([1,1.1,1])
     with col:
         st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-        aba = st.radio("", ["Entrar","Criar conta"], horizontal=True,
+        aba = st.radio("Modo de acesso", ["Entrar","Criar conta"], horizontal=True,
                        label_visibility="collapsed", key="auth_aba")
         st.markdown("<br>", unsafe_allow_html=True)
         email = st.text_input("E-mail", placeholder="seuemail@exemplo.com", key="auth_email")
@@ -659,7 +659,7 @@ with tab_dash:
                         gridcolor="rgba(0,0,0,0)", showgrid=False),
             hovermode="x unified",
         )
-        st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar":False})
+        st.plotly_chart(fig_hist, width='stretch', config={"displayModeBar":False})
 
         # Evolução do saldo acumulado
         saldo_acum = []
@@ -686,7 +686,7 @@ with tab_dash:
         ))
         fig_acum.update_layout(**cfg_acum)
         st.markdown('<div style="font-size:11px;color:rgba(255,255,255,0.35);margin:8px 0 2px 0">📈 Saldo acumulado</div>', unsafe_allow_html=True)
-        st.plotly_chart(fig_acum, use_container_width=True, config={"displayModeBar":False})
+        st.plotly_chart(fig_acum, width='stretch', config={"displayModeBar":False})
     else:
         st.info("Adicione lançamentos para ver o histórico mensal.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -718,7 +718,7 @@ with tab_dash:
                 xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(size=11, color="rgba(255,255,255,0.45)")),
                 yaxis=dict(gridcolor="rgba(255,255,255,0.05)", tickfont=dict(size=10, color="rgba(255,255,255,0.35)"),
                            showticklabels=False))
-            st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar":False})
+            st.plotly_chart(fig_bar, width='stretch', config={"displayModeBar":False})
         else:
             st.info("Nenhuma despesa neste período.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -765,7 +765,7 @@ with tab_dash:
                             orientation="v", x=0.75, y=0.5, xanchor="left", yanchor="middle"),
                 annotations=[dict(text=f"<b>{fmt(saidas)}</b>", x=0.35, y=0.5,
                     font=dict(size=13, color="white", family="Space Grotesk"), showarrow=False)])
-            st.plotly_chart(fig_ring, use_container_width=True, config={"displayModeBar":False})
+            st.plotly_chart(fig_ring, width='stretch', config={"displayModeBar":False})
         else:
             st.info("Nenhuma despesa lançada.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1177,7 +1177,7 @@ with tab_invest:
                 legend=dict(font=dict(color="rgba(255,255,255,0.65)", size=12), bgcolor="rgba(0,0,0,0)"),
                 annotations=[dict(text=f"<b>{fmt(total_p2)}</b>", x=0.38, y=0.5,
                     font=dict(size=15, color="white", family="Space Grotesk"), showarrow=False)])
-            st.plotly_chart(fig_port, use_container_width=True, config={"displayModeBar":False})
+            st.plotly_chart(fig_port, width='stretch', config={"displayModeBar":False})
 
             # Rentabilidade estimada
             st.markdown('<div class="panel-title" style="margin-top:16px">📈 Rentabilidade por Ativo</div>', unsafe_allow_html=True)
